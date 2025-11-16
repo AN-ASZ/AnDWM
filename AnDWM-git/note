@@ -1,0 +1,28 @@
+##Font installa
+sudo pacman -S ttf-iosevka noto-fonts noto-fonts-extra noto-fonts-cjk ttf-nerd-fonts-symbols ttf-nerd-fonts-symbols-common tf-jetbrains-mono-nerd && yay -S ttf-noto-nerd
+
+##requirements
+imlib2
+dash
+kitty
+starship
+zsh
+exa
+rofi
+zen-browser
+flameshot
+nemo
+greenclip
+
+sudo cp -r .config/ ~/.config
+sudo cp -r .icons ~/.icons
+sudo cp -r usr/ /usr/
+
+
+sudo touch /usr/share/xsessions/AnDWM.desktop  
+
+[Desktop Entry]
+Name=AnDWM
+Comment=fork of chadwm makt it modern 
+Exec=/home/user/.config/AnDWM/scripts/./run.sh 
+Type=Application 

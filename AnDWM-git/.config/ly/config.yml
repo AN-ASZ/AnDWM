@@ -1,0 +1,33 @@
+# ~/.config/ly/config.yml
+theme:
+  # Catpuccino / Mocha / Teal palette
+  primary: "#5E81AC"      # Teal-ish
+  background: "#1C1B19"   # Mocha background
+  foreground: "#EDEDED"   # Light text
+  accent: "#DDBEA9"       # Catpuccino
+  border: "#7C6F64"       # Slightly darker accent
+  shadow: "#2E2C28"       # Subtle shadow
+
+# Clock above login
+show_clock: true
+clock_format: "%H:%M:%S"   # 24h format
+clock_position: top         # Above login box
+clock_color: "#DDBEA9"      # Catpuccino
+
+# Login box settings
+box:
+  border: true
+  border_color: "#5E81AC"
+  text_color: "#EDEDED"
+  accent_color: "#DDBEA9"
+  rounded: true             # Rounded edges
+  shadow: true              # Subtle shadow
+  padding: 1                # Padding inside box
+
+# Fonts (optional, terminal font)
+font:
+  normal: "Monospace 12"
+  title: "Monospace Bold 14"
+
+# Misc settings
+hide_cursor: false

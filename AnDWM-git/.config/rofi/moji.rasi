@@ -1,0 +1,6 @@
+@theme "config"
+    listview {
+        columns: 5; /* Adjust the number of columns as desired */
+        spacing: 0px;
+        orientation: horizontal;
+    }
