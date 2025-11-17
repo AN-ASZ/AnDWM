@@ -16,7 +16,7 @@ yay -S --noconfirm --needed ttf-iosevka
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
-    rofi flameshot nemo zig libc++ pam libxcb xcb-util
+    rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
 
 echo "==> Installing cursor..."
 yay -S --noconfirm --needed bibata-cursor-theme-bin
