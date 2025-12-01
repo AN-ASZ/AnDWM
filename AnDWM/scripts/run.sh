@@ -10,9 +10,14 @@ xbacklight -set 10 &
 #    xrandr --addmode HDMI1 "1280x729_100.00"
 #fi
 
-xrandr --output HDMI-1 --mode 1920x1080 --rate 100 --rotate inverted
+if xrandr | grep -q "HDMI-A-0 connected"; then
+    xrandr --output HDMI-A-0 --mode 1920x1080 --rate 100 --rotate inverted
+    xset s off
+    xset s noblank
+    xset -dpms
+fi
 
-feh --bg-fill /home/hi/wallpaper/Miku.jpg
+feh --bg-fill ~/.config/AnDWM/Wallpaper/Miku_plant.png
 xset r rate 200 50 &
 
 wired &

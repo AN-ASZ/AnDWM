@@ -5,11 +5,11 @@
 /* appearance */
 static const unsigned int borderpx  = 1;        /* border pixel of windows */
 static const unsigned int default_border = 0;   /* to switch back to default border after dynamic border resizing via keybinds */
-static const unsigned int snap      = 32;       /* snap pixel */
-static const unsigned int gappih    = 10;       /* horiz inner gap between windows */
-static const unsigned int gappiv    = 10;       /* vert inner gap between windows */
-static const unsigned int gappoh    = 10;       /* horiz outer gap between windows and screen edge */
-static const unsigned int gappov    = 10;       /* vert outer gap between windows and screen edge */
+static const unsigned int snap      = 12;       /* snap pixel */
+static const unsigned int gappih    = 12;       /* horiz inner gap between windows */
+static const unsigned int gappiv    = 12;       /* vert inner gap between windows */
+static const unsigned int gappoh    = 12;       /* horiz outer gap between windows and screen edge */
+static const unsigned int gappov    = 12;       /* vert outer gap between windows and screen edge */
 static const int smartgaps          = 0;        /* 1 means no outer gap when there is only one window */
 static const unsigned int systraypinning = 0;   /* 0: sloppy systray follows selected monitor, >0: pin systray to monitor X */
 static const unsigned int systrayspacing = 6;   /* systray spacing */
@@ -20,8 +20,8 @@ static const int showtab            = showtab_auto;
 static const int toptab             = 1;        /* 0 means bottom tab */
 static const int floatbar           = 1;        /* 1 means the bar will float(don't have padding),0 means the bar have padding */
 static const int topbar             = 1;        /* 0 means bottom bar */
-static const int horizpadbar        = 5;
-static const int vertpadbar         = 11;
+static const int horizpadbar        = 6;
+static const int vertpadbar         = 12;
 static const int vertpadtab         = 35;
 static const int horizpadtabi       = 15;
 static const int horizpadtabo       = 15;
@@ -32,22 +32,22 @@ static const char buttonbar[]       = "";
 static const char *upvol[]   = { "/usr/bin/pactl", "set-sink-volume", "0", "+5%",     NULL };
 static const char *downvol[] = { "/usr/bin/pactl", "set-sink-volume", "0", "-5%",     NULL };
 static const char *mutevol[] = { "/usr/bin/pactl", "set-sink-mute",   "0", "toggle",  NULL };
-static const char *light_up[] = {"/usr/bin/light", "-A", "5", NULL};
-static const char *light_down[] = {"/usr/bin/light", "-U", "5", NULL};
+static const char *light_up[] = {"/usr/bin/light", "-A", "10", NULL};
+static const char *light_down[] = {"/usr/bin/light", "-U", "10", NULL};
 static const int new_window_attach_on_end = 0; /*  1 means the new window will attach on the end; 0 means the new window will attach on the front,default is front */
 #define ICONSIZE 19   /* icon size */
 #define ICONSPACING 8 /* space between icon and title */
 
 static const char *fonts[] = {
-    "Iosevka:style:medium:size=11.5",                     // Latin / main compact font
-    "NotoSans Nerd Font:style:medium:size=14",
-    "Noto Sans CJK SC:style:Regular:size=11.5",           // Chinese Simplified
-    "Noto Sans CJK TC:style:Regular:size=11.5",           // Chinese Traditional
-    "Noto Sans CJK JP:style:Regular:size=11.5",           // Japanese
-    "Noto Sans CJK KR:style:Regular:size=11.5",           // Korean
+    "Iosevka Medium:style:medium:size=11.5",                      // Latin / main compact font
+    "Hack Nerd Font Mono:style:Bold:size=19",
+    "Sarasa Gothic SC:style:Regular:size=10",
+    "Sarasa Gothic TC:style:Regular:size=10",           // Chinese Traditional
+    "Sarasa Gothic J:style:Regular:size=10",           // Japanese
+    "Sarasa Gothic K:style:Regular:size=10",           // Korean
     "Noto Sans Thai:style:Regular:size=11.5",            // Thai
     "Noto Sans Arabic:style:Regular:size=11.5",          // Arabic
-    "Noto Sans Devanagari:style:Regular:size=11.5"       // Hindi/Indic
+    "Noto Sans Devanagari:style:Regular:size=11.5",       // Hindi/Indic
 };
 
 static const char *togglekb[]  = { "setxkbmap", "-layout", "us,th", "-option", "grp:win_space_toggle", NULL };
@@ -158,14 +158,13 @@ static const Key keys[] = {
 	{0,				XF86XK_MonBrightnessDown,   spawn,	{.v = light_down}},
 
     // screenshot fullscreen and cropped
-    { MODKEY|ControlMask|ShiftMask,     XK_s,       spawn,          SHCMD("flameshot gui --accept-on-select --raw > /tmp/shot.png && xclip -selection clipboard -t image/png -i /tmp/shot.png && rm /tmp/shot.png") },
+    { MODKEY|ShiftMask,     		XK_s,       spawn,          SHCMD("maim -s ~/Pictures/Screenshots/tmp.png && xclip -selection clipboard -t image/png -i ~/Pictures/Screenshots/tmp.png") },
     { MODKEY,                           XK_a,       spawn,          SHCMD("rofi -show drun -theme ~/.config/AnDWM/rofi/config.rasi") },
     { MODKEY,                           XK_Return,  spawn,          SHCMD("kitty") },
     { MODKEY,                           XK_e,       spawn,          SHCMD("nemo") },
     { MODKEY,                           XK_b,       spawn,          SHCMD("MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_USE_XINPUT2=1 taskset -c 2-7 zen-browser") },
     { MODKEY,                           XK_v,       spawn,          SHCMD("rofi -modi \"clipboard:greenclip print\" -show clipboard -run-command '{cmd}' -theme ~/.config/AnDWM/rofi/config_clip.rasi") },
     { MODKEY,                           XK_period,  spawn,          SHCMD("rofi -modi \"emoji:rofimoji --action copy --hidden-descriptions\" -show emoji -theme ~/.config/AnDWM/rofi/moji.rasi") },
-    { MODKEY|ShiftMask,                 XK_s,       spawn,          SHCMD("flameshot gui") },
     { MODKEY|ShiftMask,                 XK_c,       spawn,          SHCMD("highlight-pointer.sh") },
 
     // toggle stuff

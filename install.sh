@@ -16,14 +16,13 @@ yay -S --noconfirm --needed ttf-iosevka
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
-    rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
+    rofi flameshot nemo zig libc++ pam libxcb xcb-util picom zen-browser-bin \
 
 echo "==> Installing cursor..."
 yay -S --noconfirm --needed bibata-cursor-theme-bin
 
 echo "==> Installing greenclip..."
-yay -S --noconfirm --needed rofi-greenclip
- 
+yay -S --noconfirm --needed rofi-greenclip 
 
 # -------------------------
 # ASK BEFORE ENABLING LY
