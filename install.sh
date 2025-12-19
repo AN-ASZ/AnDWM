@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
+echo "==> Installing/Updating yay..."
+git clone https://aur.archlinux.org/yay.git
+cd yay
+makepkg -si
+cd ..
+rm -rf yay
+
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
