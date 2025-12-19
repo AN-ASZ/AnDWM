@@ -2,11 +2,12 @@
 set -e
 
 echo "==> Installing required packages..."
-yay pacman -S --needed --noconfirm \
+sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
-    kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom zen-browser-bin \
+    kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip
+yay -S --needed --noconfirm zen-browser-bin
 
 echo "==> Installing cursor..."
 yay -S --noconfirm --needed bibata-cursor-theme-bin
