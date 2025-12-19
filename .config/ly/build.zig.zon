@@ -1,0 +1,21 @@
+.{
+    .name = .ly,
+    .version = "1.3.0",
+    .fingerprint = 0xa148ffcc5dc2cb59,
+    .minimum_zig_version = "0.15.0",
+    .dependencies = .{
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
+        .zigini = .{
+            .url = "https://github.com/AnErrupTion/zigini/archive/96ca1d9f1a7ec741f07ceb104dae2b3a7bdfd48a.tar.gz",
+            .hash = "zigini-0.3.2-BSkB7WJJAADybd5DGd9MLCp6ikGGUq9wicxsjv0HF1Qc",
+        },
+        .termbox2 = .{
+            .url = "git+https://github.com/AnErrupTion/termbox2?ref=master#290ac6b8225aacfd16851224682b851b65fcb918",
+            .hash = "N-V-__8AAGcUBQAa5vov1Yi_9AXEffFQ1e2KsXaK4dgygRKq",
+        },
+    },
+    .paths = .{""},
+}

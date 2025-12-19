@@ -71,15 +71,15 @@ shadow-exclude = [
 # Fade windows in/out when opening/closing and when opacity changes,
 #  unless no-fading-openclose is used.
 # fading = false
-fading = true;
+# fading = true;
 
 # Opacity change between steps while fading in. (0.01 - 1.0, defaults to 0.028)
 # fade-in-step = 0.028
-fade-in-step = 0.05;
+# fade-in-step = 0.05;
 
 # Opacity change between steps while fading out. (0.01 - 1.0, defaults to 0.03)
 # fade-out-step = 0.03
-fade-out-step = 0.05;
+# fade-out-step = 0.05;
 
 # The time between steps in fade step, in milliseconds. (> 0, defaults to 10)
 # fade-delta = 10
@@ -88,11 +88,15 @@ fade-out-step = 0.05;
 # fade-exclude = []
 
 # Do not fade on window open/close.
-# no-fading-openclose = false
+no-fading-openclose = false
 
 # Do not fade destroyed ARGB windows with WM frame. Workaround of bugs in Openbox, Fluxbox, etc.
-# no-fading-destroyed-argb = false
+no-fading-destroyed-argb = false
 
+fading = true;
+fade-in-step = 0.05;
+fade-out-step = 0.1;
+fade-delta = 5;
 
 #################################
 #   Transparency / Opacity      #
@@ -121,7 +125,7 @@ active-opacity = 0.8;
 # focus-exclude = []
 
 focus-exclude = [ "class_g = 'Cairo-clock'",
-		  "class_g = 'Rofi'", ];
+		 "class_g = 'rofii'", ];
 
 # Use fixed inactive dim value, instead of adjusting according to window opacity.
 # inactive-dim-fixed = 1.0
@@ -137,6 +141,9 @@ focus-exclude = [ "class_g = 'Cairo-clock'",
 opacity-rule = [
 	"100:fullscreen",
         "100:class_g = 'Zen-browser' && fullscreen",
+	"80:class_g = 'Rofi'",
+ 	"75:class_g = 'dwm'",
+	"65:class_g = 'wired'",
 ];
 
 
@@ -147,13 +154,13 @@ opacity-rule = [
 # Sets the radius of rounded window corners. When > 0, the compositor will
 # round the corners of windows. Does not interact well with
 # `transparent-clipping`.
-corner-radius = 12
+corner-radius = 18
 
 # Exclude conditions for rounded corners.
 rounded-corners-exclude = [
   "window_type = 'dock'",
   "window_type = 'desktop'",
-  "class_g = 'Rofi'",
+  #"class_g = 'Rofii'",
 ];
 
 
@@ -164,6 +171,7 @@ rounded-corners-exclude = [
 
 # Parameters for background blurring, see the *BLUR* section for more information.
 blur-method = "dual_kawase";
+# blur-method = "kernel";
 blur-size = 12;
 #
 #blur-deviation = false
@@ -174,18 +182,18 @@ blur-strength = 10;
 # Bad in performance, with driver-dependent behavior.
 # The name of the switch may change without prior notifications.
 #
-blur-background = false
+blur-background = false;
 
 # Blur background of windows when the window frame is not opaque.
 # Implies:
 #    blur-background
 # Bad in performance, with driver-dependent behavior. The name may change.
 #
-blur-background-frame = false
+blur-background-frame = false;
 
 
 # Use fixed blur strength rather than adjusting according to window opacity.
-# blur-background-fixed = false
+blur-background-fixed = true;
 
 
 # Specify the blur convolution kernel, with the following format:
@@ -201,7 +209,10 @@ blur-background-frame = false
 blur-background-exclude = [
   "window_type = 'dock'",
   "window_type = 'desktop'",
-  "class_g = 'Rofi'",
+  "class_g = 'Rofii'",
+  #"window_type = 'popup_menu'",
+  "window_type = 'tooltip'",
+  "fullscreen = 1",
 ];
 
 #################################
@@ -218,7 +229,7 @@ blur-background-exclude = [
 # `xrender` is the default one.
 #
 backend = "glx"
-# backend = "xrender";
+#backend = "xrender";
 
 # Enable/disable VSync.
 # vsync = false
@@ -231,17 +242,17 @@ vsync = true;
 # child that has 'WM_STATE') and mark them as active.
 #
 # mark-wmwin-focused = false
-mark-wmwin-focused = true;
+mark-wmwin-focused = false;
 
 # Mark override-redirect windows that doesn't have a child window with 'WM_STATE' focused.
 # mark-ovredir-focused = false
-mark-ovredir-focused = false;
+mark-ovredir-focused = true;
 
 # Try to detect windows with rounded corners and don't consider them
 # shaped windows. The accuracy is not very high, unfortunately.
 #
 # detect-rounded-corners = false
-detect-rounded-corners = false;
+detect-rounded-corners = true;
 
 # Detect '_NET_WM_WINDOW_OPACITY' on client windows, useful for window managers
 # not passing '_NET_WM_WINDOW_OPACITY' of client windows to frame windows.
@@ -271,7 +282,7 @@ unredir-if-possible = true;
 # in the same group focused at the same time.
 #
 # detect-transient = false
-detect-transient = false;
+detect-transient = true;
 
 # Use 'WM_CLIENT_LEADER' to group windows, and consider windows in the same
 # group focused at the same time. This usually means windows from the same application
@@ -291,7 +302,7 @@ detect-transient = false;
 # with a 5x5 one you use `--resize-damage 2`, and so on).
 # May or may not work with *--glx-no-stencil*. Shrinking doesn't function correctly.
 #
-# resize-damage = 1
+#resize-damage = 1
 
 # Specify a list of conditions of windows that should be painted with inverted color.
 # Resource-hogging, and is not well tested.
@@ -303,7 +314,7 @@ detect-transient = false;
 # practically happened) and may not work with blur-background.
 # My tests show a 15% performance boost. Recommended.
 #
-glx-no-stencil = true
+#glx-no-stencil = false
 
 # GLX backend: Avoid rebinding pixmap on window damage.
 # Probably could improve performance on rapid window content changes,
@@ -318,7 +329,7 @@ glx-no-stencil = true
 # The opposing option is use-damage
 #
 #no-use-damage = false;
-use-damage = false;
+use-damage = true;
 
 # Use X Sync fence to sync clients' draw calls, to make sure all draw
 # calls are finished before picom starts drawing. Needed on nvidia-drivers
@@ -340,7 +351,7 @@ use-damage = false;
 # Do not use EWMH to detect fullscreen windows.
 # Reverts to checking if a window is fullscreen based only on its size and coordinates.
 #
-no-ewmh-fullscreen = false
+no-ewmh-fullscreen = true
 
 # Dimming bright windows so their brightness doesn't exceed this set value.
 # Brightness of a window is estimated by averaging all pixels in the window,
@@ -421,38 +432,38 @@ animations = true;
 animations = ({
     triggers = [ "open" ];
     scale-x = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.05)";
-        duration = 0.6;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.08)";
+        duration = 0.4;
         delay = 0;
         start = 0;
         end = 1;
     };
     offset-x = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.05)";
-        duration = 0.6;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.08)";
+        duration = 0.4;
         delay = 0;
         start = "window-width / 2";
         end = 0;
     }
     scale-y = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.05)";
-        duration = 0.6;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.08)";
+        duration = 0.4;
         delay = 0;
         start = 0.5;
         end = 1;
     };
     offset-y = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.05)";
-        duration = 0.6;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.08)";
+        duration = 0.4;
         delay = 0;
         start = "window-height / 4";
         end = 0;
     };
     opacity = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.05)";
-        duration = 0.5;
-        start = 0.1;
-        end = 1;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.08)";
+        duration = 0.8;
+        start = 0;
+        end = 0.8;
     }
 }, {
     triggers = [ "close" ];
@@ -463,39 +474,38 @@ animations = ({
     triggers = [ "show" ];
     preset = "appear";
     scale = 1;
-    duration = 0.3;
+    duration = 0.25;
 }, {
     triggers = [ "hide" ];
     preset = "disappear";
     scale = 1;
-    duration = 0.2;
+    duration = 0.25;
 }, 
 {
     triggers = [ "geometry"];
     scale-x = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1)";
-        duration = 0.6;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.09)";
+        duration = 0.5;
         start = "window-width-before / window-width";
         end = 1;
     };
     scale-y = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1)";
-        duration = 0.7;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.09)";
+        duration = 0.5;
         start = "window-height-before / window-height";
         end = 1;
     };
     offset-x = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1)";
-        duration = 0.6;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.09)";
+        duration = 0.5;
         start = "window-x-before / window-x";
         end = 1;
     };
     offset-y = {
-        curve = "cubic-bezier(0.05, 0.9, 0.1, 1)";
-        duration = 0.7;
+        curve = "cubic-bezier(0.05, 0.9, 0.1, 1.09)";
+        duration = 0.5;
         start = "window-y-before / window-y";
         end = 1;
     };
 }
 );
-

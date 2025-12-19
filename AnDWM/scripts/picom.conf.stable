@@ -1,0 +1,374 @@
+shadow = true;
+shadow-radius = 50;
+shadow-opacity = 1
+shadow-offset-x = -50;
+shadow-offset-y = -50;
+shadow-color = "#000000"
+
+frame-opacity = 0.95;
+frame-opacity-for-same-colors = true;
+
+corner-radius = 13
+
+blur-method = "dual_kawase"
+blur-background = true
+blur-background-frame = true
+
+backend = "glx"
+dithered-present = false;
+vsync = true;
+detect-client-opacity = true;
+detect-transient = true;
+detect-client-leader = true
+glx-no-stencil = true
+glx-no-rebind-pixmap = true
+use-damage = true;
+xrender-sync-fence = true
+log-level = "warn";
+
+rules = (
+    {
+        match = "_MY_CUSTOM_WORKSPACE_SWITCH@ = 1";
+        animations = (
+            {
+                triggers = ["open", "show"];
+                offset-x = {
+                    start = "-1920";
+                    end = "0";
+                    duration = "0.3";
+                };
+                shadow-offset-x = "offset-x"
+            },
+            {
+                triggers = ["close", "hide"];
+                opacity = {
+                    curve = "linear";
+                    duration = 0.3;
+                    start = "window-raw-opacity-before";
+                    end = "window-raw-opacity-before";
+                };
+                blur-opacity = 0;
+                shadow-opacity = "opacity";
+                offset-x = {
+                    start = "0";
+                    end = "-1920";
+                    duration = "0.3"
+                };
+                shadow-offset-x = "offset-x"
+            }
+        )
+    },
+    {
+        match = "_MY_CUSTOM_WORKSPACE_SWITCH@ = 2";
+        animations = (
+            {
+                triggers = ["open", "show"];
+                offset-x = {
+                    start = "1920";
+                    end = "0";
+                    duration = "0.3";
+                };
+                shadow-offset-x = "offset-x"
+            },
+            {
+                triggers = ["close", "hide"];
+                opacity = {
+                    curve = "linear";
+                    duration = 0.3;
+                    start = "window-raw-opacity-before";
+                    end = "window-raw-opacity-before";
+                };
+                blur-opacity = 0;
+                shadow-opacity = "opacity";
+                offset-x = {
+                    start = "0";
+                    end = "1920";
+                    duration = "0.3"
+                };
+                shadow-offset-x = "offset-x"
+            }
+        )
+    },
+    {
+        match = "fullscreen"; 
+    corner-radius=0; 
+    },
+    {
+    match = "WM_TRANSIENT_FOR@";
+    animations = ({
+        triggers = ["open", "show"];
+        opacity = {
+            curve = "linear";
+            duration = 0.15;
+            start = "window-raw-opacity-before";
+            end = "window-raw-opacity";
+        };
+        blur-opacity = {
+            curve = "linear";
+            duration = 0.1;
+            delay = 0.15;
+            start = "window-raw-opacity-before";
+            end = "window-raw-opacity";
+        };
+        shadow-opacity = "opacity";
+        scale-y = {
+            curve = "cubic-bezier(0.24, 0.64, 0.79, 0.98)";
+            duration = 0.15;
+            start = 0.8;
+            end = 1;
+        };
+        offset-y = "(-window-height/2) + (window-height/2) * scale-y";
+        shadow-scale-y = "scale-y";
+        shadow-offset-y = "offset-y";
+    },{
+        triggers = ["close", "hide"];
+        opacity = {
+            curve = "linear";
+            duration = 0.15;
+            start = "window-raw-opacity-before";
+            end = "0";
+        };
+        blur-opacity = 0;
+        shadow-opacity = "opacity";
+        scale-y = {
+            curve = "cubic-bezier(0.21, 0.02, 0.76, 0.36)";
+            duration = 0.15;
+            start = 1;
+            end = 0.7;
+        };
+        offset-y = "(-window-height/2) + (window-height/2) * scale-y";
+        shadow-scale-y = "scale-y";
+        shadow-offset-y = "offset-y";
+    });
+}, {
+    match = "window_type = 'dropdown_menu' || window_type = 'popup_menu' || window_type = 'menu'";
+    animations = ({
+        triggers = ["open", "show"];
+        opacity = {
+            curve = "linear";
+            duration = 0.15;
+            start = "window-raw-opacity-before";
+            end = "window-raw-opacity";
+        };
+        blur-opacity = {
+            curve = "linear";
+            duration = 0.1;
+            delay = 0.15;
+            start = "window-raw-opacity-before";
+            end = "window-raw-opacity";
+        };
+        shadow-opacity = "opacity";
+        scale-y = {
+            curve = "cubic-bezier(0.24, 0.64, 0.79, 0.98)";
+            duration = 0.15;
+            start = 0.8;
+            end = 1;
+        };
+        shadow-scale-y = "scale-y";
+    },{
+        triggers = ["close", "hide"];
+        opacity = {
+            curve = "linear";
+            duration = 0.15;
+            start = "window-raw-opacity-before";
+            end = "0";
+        };
+        blur-opacity = 0;
+        shadow-opacity = "opacity";
+        scale-y = {
+            curve = "cubic-bezier(0.21, 0.02, 0.76, 0.36)";
+            duration = 0.15;
+            start = 1;
+            end = 0.7;
+        };
+        shadow-scale-y = "scale-y";
+    });
+}, {
+    match = "window_type = 'dropdown_menu' || window_type = 'popup_menu' || window_type = 'menu'";
+    opacity = 0.9;
+}, {
+    match = "window_type = 'dock' || window_type = 'desktop'";
+    blur-background = false;
+    corner-radius = 0;
+}, {
+    match = "class_g *= 'i3lock' || _NET_WM_STATE@[1] = '_NET_WM_STATE_FULLSCREEN' || _NET_WM_STATE@[2] = '_NET_WM_STATE_FULLSCREEN' || _NET_WM_STATE@[3] = '_NET_WM_STATE_FULLSCREEN' || _NET_WM_STATE@[4] = '_NET_WM_STATE_FULLSCREEN'";
+    shadow = false;
+    corner-radius = 0;
+    animations = ({
+        triggers = ["open", "show"];
+        opacity = {
+            curve = "linear";
+            duration = 0.15;
+            start = "window-raw-opacity-before";
+            end = "window-raw-opacity";
+        };
+        blur-opacity = {
+            curve = "linear";
+            duration = 0.1;
+            delay = 0.15;
+            start = "window-raw-opacity-before";
+            end = "window-raw-opacity";
+        };
+        shadow-opacity = "opacity";
+    },{
+        triggers = ["close", "hide"];
+        opacity = {
+            curve = "linear";
+            duration = 0.15;
+            start = "window-raw-opacity-before";
+            end = "0";
+        };
+        blur-opacity = 0;
+        shadow-opacity = "opacity";
+    });
+},{
+        match = "class_g = 'Polybar'";
+        blur-background = true;
+        shadow = false;
+    });
+
+animations = ({
+    triggers = ["close", "hide"];
+    opacity = {
+        curve = "linear";
+        duration = 0.15;
+        start = "window-raw-opacity-before";
+        end = "window-raw-opacity";
+    };
+    blur-opacity = "0";
+    shadow-opacity = "opacity";
+    offset-x = "(1 - scale-x) / 2 * window-width";
+    offset-y = "(1 - scale-y) / 2 * window-height * 5";
+    scale-x = {
+        curve = "cubic-bezier(0.21, 0.02, 0.76, 0.36)";
+        duration = 0.15;
+        start = 1;
+        end = 0.9;
+    };
+    scale-y = "scale-x";
+    shadow-scale-x = "scale-x";
+    shadow-scale-y = "scale-y";
+    shadow-offset-x = "offset-x";
+    shadow-offset-y = "offset-y";
+}, {
+    triggers = ["open", "show"];
+    opacity = {
+        curve = "linear";
+        duration = 0.15;
+        start = "window-raw-opacity-before";
+        end = "window-raw-opacity";
+    };
+    blur-opacity = {
+        curve = "linear";
+        duration = 0.1;
+        delay = 0.15;
+        start = "window-raw-opacity-before";
+        end = "window-raw-opacity";
+    };
+    shadow-opacity = "opacity";
+    offset-x = "(1 - scale-x) / 2 * window-width";
+    offset-y = "(1 - scale-y) / 2 * window-height * 5";
+    scale-x = {
+        curve = "cubic-bezier(0.24, 0.64, 0.79, 0.98)";
+        duration = 0.15;
+        start = 0.95;
+        end = 1;
+    };
+    scale-y = "scale-x";
+    shadow-scale-x = "scale-x";
+    shadow-scale-y = "scale-y";
+    shadow-offset-x = "offset-x";
+    shadow-offset-y = "offset-y";
+},{
+    triggers = [ "geometry" ];
+    # preset = "geometry-change";
+    scale-x = {
+        start = "window-width-before / window-width";
+        end = "1";
+        duration = 0.25;
+    };
+    scale-y = {
+        start = "window-height-before / window-height";
+        end = "1";
+        duration = 0.25;
+    };
+    shadow-scale-x = "scale-x";
+    shadow-scale-y = "scale-y";
+    offset-x = {
+        start = "window-x-before - window-x";
+        end = "0";
+        duration = "0.25";
+    };
+    offset-y = {
+        start = "window-y-before - window-y";
+        end = "0";
+        duration = "0.25";
+    };
+    shadow-offset-x = "offset-x";
+    shadow-offset-y = "offset-y";
+}
+
+# Full Opaque Desktop Switch
+#{
+#    triggers = ["workspace-out"];
+#    offset-y = {
+#        timing = "0.15s cubic-bezier(0.21, 0.02, 0.76, 0.36)";
+#        start = "0";
+#        end = "-window-monitor-height";
+#    };
+#    shadow-offset-y = "offset-y";
+#    opacity = {
+#        timing = "0.2s linear";
+#        start = "window-raw-opacity-before";
+#        end = "window-raw-opacity-before";
+#    };
+#    blur-opacity = "opacity";
+#    shadow-opacity = "opacity";
+#}, {
+#    triggers = ["workspace-out-inverse"];
+#    offset-y = {
+#        timing = "0.15s cubic-bezier(0.21, 0.02, 0.76, 0.36)";
+#        start = "0";
+#        end = "window-monitor-height";
+#    };
+#    shadow-offset-y = "offset-y";
+#    opacity = {
+#        timing = "0.2s linear";
+#        start = "window-raw-opacity-before";
+#        end = "window-raw-opacity-before";
+#    };
+#    blur-opacity = "opacity";
+#    shadow-opacity = "opacity";
+#}, {
+#    triggers = ["workspace-in"];
+#    offset-y = {
+#        timing = "0.15s cubic-bezier(0.24, 0.64, 0.79, 0.98)";
+#        start = "window-monitor-height";
+#        end = "0";
+#    };
+#    shadow-offset-y = "offset-y";
+#    opacity = {
+#        timing = "0.2s linear";
+#        start = "window-raw-opacity";
+#        end = "window-raw-opacity";
+#    };
+#    blur-opacity = "opacity";
+#    shadow-opacity = "opacity";
+#}, {
+#    triggers = ["workspace-in-inverse"];
+#    offset-y = {
+#        timing = "0.15s cubic-bezier(0.24, 0.64, 0.79, 0.98)";
+#        start = "-window-monitor-height";
+#        end = "0";
+#    };
+#    shadow-offset-y = "offset-y";
+#    opacity = {
+#        timing = "0.2s linear";
+#        start = "window-raw-opacity";
+#        end = "window-raw-opacity";
+#    };
+#    blur-opacity = "opacity";
+#    shadow-opacity = "opacity";
+#}
+
+)

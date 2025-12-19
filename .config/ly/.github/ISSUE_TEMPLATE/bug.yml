@@ -1,0 +1,69 @@
+name: Bug report
+description: File a bug report.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Pre-requisites
+      description: By submitting this issue, you agree to have done the following.
+      options:
+        - label: I have looked for any other duplicate issues
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Ly version
+      description: The output of `ly --version`. Please note that only Ly v1.2.0 and above are supported.
+      placeholder: 1.1.0-dev.12+2b0301c
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: OS + Desktop environment/Window manager
+      description: Which OS and DE (or WM) did you use when observing the problem?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: What **exactly** can someone else do in order to observe the problem you observed?
+      placeholder: |
+        1. Authenticate with ...
+        2. Go to ...
+        3. Create file ...
+        4. Log out and log back in
+        5. Observe error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Please copy and paste (or attach) any relevant logs, error messages or any other output. This will be automatically formatted into code, so no need for backticks. Screenshots are accepted if they make life easier for you. The log files (located as specified by `/etc/ly/config.ini`) usually contain relevant information about the problem:
+         - The session log is located at `~/.local/state/ly-session.log` by default.
+         - The system log is located at `/var/log/ly.log` by default.
+      render: shell
+  - type: textarea
+    id: moreinfo
+    attributes:
+      label: Additional information
+      description: If you have any additional information that might be helpful in reproducing the problem, please provide it here.

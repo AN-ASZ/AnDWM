@@ -17,6 +17,7 @@ static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8}
 static const long utfmin[UTF_SIZ + 1] = {       0,    0,  0x80,  0x800,  0x10000};
 static const long utfmax[UTF_SIZ + 1] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF, 0x10FFFF};
 
+
 static long
 utf8decodebyte(const char c, size_t *i)
 {
@@ -60,6 +61,7 @@ utf8decode(const char *c, long *u, size_t clen)
 
 	return len;
 }
+
 
 Drw *
 drw_create(Display *dpy, int screen, Window root, unsigned int w, unsigned int h)
