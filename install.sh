@@ -47,7 +47,6 @@ sudo wget https://github.com/be5invis/Sarasa-Gothic/releases/download/v1.0.35/Sa
 sudo 7z x Sarasa-SuperTTC-1.0.35.7z
 rm Sarasa-SuperTTC-1.0.35.7z
 fc-cache -fv
-cd "$HOME"/.config/AnDWM/
 
 # -------------------------
 # ASK BEFORE ENABLING LY
@@ -74,6 +73,7 @@ else
 fi
 
 echo "==> Copying dotfiles..."
+cd "$HOME"/AnDWM/AnDWM/
 sudo cp -r AnDWM "$HOME"/.config/
 sudo cp -r .config "$HOME"
 sudo cp -r .icons "$HOME"
