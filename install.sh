@@ -98,11 +98,10 @@ sudo bash -c "cat > $DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=AnDWM
 Comment=fork of chadwm makt it modern
-Exec=$HOME/.config/AnDWM/scripts/run.sh
+Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
 Type=Application
 EOF
 
 echo "==> Installation complete!"
 echo "Reboot and select 'AnDWM' on login."
 echo "Thank you for chadwm"
-
