@@ -4,9 +4,7 @@ set -e
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
-    rofi flameshot nemo zig libc++ pam libxcb xcb-util picom zen-browser-bin \
-    imlib2 kitty starship exa \
-    rofi flameshot nemo zig libc++ pam libxcb xcb-util picom zen-browser-bin \
+    kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom zen-browser-bin \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip
 
