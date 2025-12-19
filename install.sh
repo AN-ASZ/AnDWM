@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 set -e
+echo "This scripts is not fully runable and will return som error"
+echo "please run at you own RISK and always read what this scripts do with you machin"
+read -rp "Did you want to continue? (y/n): " ans
+if [[ "$ans" != "n" || "$ans" != "N" ]]; then
+    break
+else
+    echo "=> Be carefull !"
+fi
+sudo pacman -Syu
 
 echo "==> Installing/Updating yay..."
 git clone https://aur.archlinux.org/yay.git
@@ -28,6 +37,7 @@ sudo cp -r AnDWM "$HOME"/.config/
 echo "==> Installing fonts..."
 sudo pacman -S --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
 yay -S --noconfirm --needed ttf-iosevka
+mkdir -p ~/.local/share/fonts/
 cd ~/.local/share/fonts/
 sudo wget https://github.com/be5invis/Sarasa-Gothic/releases/download/v1.0.35/Sarasa-SuperTTC-1.0.35.7z
 sudo 7z x Sarasa-SuperTTC-1.0.35.7z
