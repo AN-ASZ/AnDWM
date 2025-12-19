@@ -27,8 +27,8 @@ sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
-    libxfixes libxdamage libxcomposite libxmu libxtst p7zip
-yay -S --needed --noconfirm zen-browser-bin
+    libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome wireless_tools xorg-xsetroot
+yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
 yay -S --noconfirm --needed bibata-cursor-theme-bin

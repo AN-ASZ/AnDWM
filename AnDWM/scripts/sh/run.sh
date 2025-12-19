@@ -29,10 +29,6 @@ setxkbmap -layout us,th -option grp:win_space_toggle &
 
 /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
 
-bluetoothctl trust 20:04:84:72:A1:18 &
-bluetoothctl power on &
-bluetoothctl connect 20:04:84:72:A1:18 &
-
 systemctl --user start opentabletdriver &
 
 # Start DWM inside correct dbus session
