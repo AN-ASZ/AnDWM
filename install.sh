@@ -61,10 +61,11 @@ if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
     cd ..
 
     echo "=> Disabling other display managers..."
-    sudo systemctl disable sddm.service
-    sudo systemctl disable lightdm.service
-    sudo systemctl disable gdm.service
-    sudo systemctl disable lxdm.service
+    sudo systemctl disable sddm.service || true
+    sudo systemctl disable lightdm.service || true
+    sudo systemctl disable gdm.service || true
+    sudo systemctl disable lxdm.service || true
+    
 
     echo "=> Enabling LY..."
     sudo systemctl enable ly@tty2.service
