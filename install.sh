@@ -73,7 +73,7 @@ else
 fi
 
 echo "==> Copying dotfiles..."
-cd "$HOME"/AnDWM/AnDWM/
+cd "$HOME/AnDWM/"
 sudo cp -r AnDWM "$HOME"/.config/
 sudo cp -r .config "$HOME"
 sudo cp -r .icons "$HOME"
