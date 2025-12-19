@@ -3,7 +3,7 @@ sessions. For example:
 
 [Desktop Entry]
 Name=Fish shell
-Exec=/usr/bin/fish
+Exec=$PREFIX_DIRECTORY/bin/fish
 DesktopNames=null
 Terminal=true
 

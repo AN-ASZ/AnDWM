@@ -187,8 +187,8 @@ static const Key keys[] = {
     // change m,cfact sizes 
     { MODKEY,                           XK_o,       setmfact,       {.f = -0.05} },
     { MODKEY,                           XK_p,       setmfact,       {.f = +0.05} },
-    { MODKEY|ShiftMask,                 XK_h,       setcfact,       {.f = +0.25} },
-    { MODKEY|ShiftMask,                 XK_l,       setcfact,       {.f = -0.25} },
+    { MODKEY|ShiftMask,                 XK_o,       setcfact,       {.f = +0.25} },
+    { MODKEY|ShiftMask,                 XK_p,       setcfact,       {.f = -0.25} },
 
 
     { MODKEY|ShiftMask,                 XK_j,       movestack,      {.i = +1 } },

@@ -1,0 +1,22 @@
+name: Feature request
+description: Request a new feature or enhancement.
+title: "[Feature] "
+labels: ["feature"]
+body:
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Pre-requisites
+      description: By submitting this issue, you agree to have done the following.
+      options:
+        - label: I have looked for any other duplicate issues
+          required: true
+        - label: I have confirmed the requested feature doesn't exist in the latest version in development
+          required: true
+  - type: textarea
+    id: wanted
+    attributes:
+      label: Wanted behavior
+      description: What do you want to be added? Describe the behavior clearly.
+    validations:
+      required: true

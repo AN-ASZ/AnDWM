@@ -26,9 +26,9 @@ configuration {
 window {
     location:       center;
     width:          600;
-    height:         600;
+    height:         500;
     y-offset:       0;
-    border-radius:  24px;
+    border-radius:  18px;
 
     border: 1px;
     border-color: @bg3;
@@ -36,14 +36,14 @@ window {
 }
 
 mainbox {
-    padding:    12px;
+    padding:    8px;
 }
 
 inputbar {
     background-color:   @bg1;
     border-color:       @bg3;
-    border-radius:  16px;
-    border:         2px;
+    border-radius:  14px;
+    border:         1px;
 
     padding:    8px 16px;
     spacing:    8px;
@@ -61,7 +61,7 @@ entry {
 
 message {
     margin:             12px 0 0;
-    border-radius:      16px;
+    border-radius:      14px;
     border-color:       @bg2;
     background-color:   @bg2;
 }

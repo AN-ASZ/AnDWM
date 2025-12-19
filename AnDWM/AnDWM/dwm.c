@@ -20,6 +20,7 @@
  *
  * To understand everything else, start reading main().
  */
+#include <math.h>
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
@@ -45,6 +46,10 @@
 #include <Imlib2.h>
 #include "drw.h"
 #include "util.h"
+
+/* tile animation config */
+#define TILE_ANIM_STEPS 2      /* more = smoother, slower */
+#define TILE_ANIM_DELAY 500   /* microseconds */
 
 /* macros */
 #define BUTTONMASK (ButtonPressMask | ButtonReleaseMask)
@@ -304,7 +309,6 @@ static void scan(void);
 static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2,
                      long d3, long d4);
 static void sendmon(Client *c, Monitor *m);
-static void setborderpx(const Arg *arg);
 static void setclientstate(Client *c, long state);
 static void setclienttagprop(Client *c);
 static void setcurrentdesktop(void);
@@ -585,7 +589,8 @@ void arrangemon(Monitor *m) {
   updatesystray();
   XMoveResizeWindow(dpy, m->tabwin, m->wx + m->gappov, m->ty, m->ww - 2 * m->gappov, th);
   XMoveWindow(dpy, m->tagwin, m->wx + m->gappov, m->by + (m->topbar ? (bh + m->gappoh) : (- (m->mh / scalepreview) - m->gappoh)));
-  strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof m->ltsymbol);
+  strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof(m->ltsymbol) - 1);
+  m->ltsymbol[sizeof(m->ltsymbol) - 1] = '\0';
   if (m->lt[m->sellt]->arrange)
     m->lt[m->sellt]->arrange(m);
 }
@@ -1189,7 +1194,6 @@ void dragcfact(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w / 2, c->h / 2);
 
   prev_x = prev_y = -999999;
 
@@ -1228,7 +1232,6 @@ void dragcfact(const Arg *arg) {
     }
   } while (ev.type != ButtonRelease);
 
-  XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w / 2, c->h / 2);
 
   XUngrabPointer(dpy, CurrentTime);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
@@ -1391,7 +1394,6 @@ void dragmfact(const Arg *arg) {
           cursor[horizontal ? CurResizeVertArrow : CurResizeHorzArrow]->cursor,
           CurrentTime) != GrabSuccess)
     return;
-  XWarpPointer(dpy, None, root, 0, 0, 0, 0, px, py);
 
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
@@ -1460,7 +1462,7 @@ void dragmfact(const Arg *arg) {
 }
 
 void drawbar(Monitor *m) {
-  int x, y = borderpx, w, sw = 0, stw = 0;
+  int x = 0, y = borderpx, w, sw = 0, stw = 0;
   int bh_n = bh - borderpx * 2;
   int mw;
   if(floatbar){
@@ -2260,6 +2262,7 @@ void movemouse(const Arg *arg) {
   restack(selmon);
   ocx = c->x;
   ocy = c->y;
+  
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
@@ -2274,7 +2277,7 @@ void movemouse(const Arg *arg) {
       handler[ev.type](&ev);
       break;
     case MotionNotify:
-      if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+      if ((ev.xmotion.time - lasttime) <= (1000 / 100))  // 100 FPS
         continue;
       lasttime = ev.xmotion.time;
 
@@ -2289,13 +2292,15 @@ void movemouse(const Arg *arg) {
       else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
         ny = selmon->wy + selmon->wh - HEIGHT(c);
       if (!c->isfloating && selmon->lt[selmon->sellt]->arrange &&
-          (abs(nx - c->x) > snap || abs(ny - c->y) > snap))
+          (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
         togglefloating(NULL);
+      }
       if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
         resize(c, nx, ny, c->w, c->h, 1);
       break;
     }
   } while (ev.type != ButtonRelease);
+  
   XUngrabPointer(dpy, CurrentTime);
   if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
     sendmon(c, m);
@@ -2338,9 +2343,6 @@ placemouse(const Arg *arg)
 	XGetWindowAttributes(dpy, c->win, &wa);
 	ocx = wa.x;
 	ocy = wa.y;
-
-	if (arg->i == 2) // warp cursor to client center
-		XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, WIDTH(c) / 2, HEIGHT(c) / 2);
 
 	if (!getrootptr(&x, &y))
 		return;
@@ -2548,10 +2550,48 @@ void removesystrayicon(Client *i) {
   free(i);
 }
 
-void resize(Client *c, int x, int y, int w, int h, int interact) {
-  if (applysizehints(c, &x, &y, &w, &h, interact))
-    resizeclient(c, x, y, w, h);
+void resizeclient_animated(Client *c, int x, int y, int w, int h) {
+    if (!c) return;
+
+    int start_x = c->x;
+    int start_y = c->y;
+    int start_w = c->w;
+    int start_h = c->h;
+
+    float steps[] = {0.6,0.85, 0.95};
+
+    for (int i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
+        int nx = start_x + (x - start_x) * steps[i];
+        int ny = start_y + (y - start_y) * steps[i];
+        int nw = start_w + (w - start_w) * steps[i];
+        int nh = start_h + (h - start_h) * steps[i];
+
+        XMoveResizeWindow(dpy, c->win, nx, ny, nw, nh);
+        XFlush(dpy);
+        usleep(12000); // adjust speed
+    }
+
+    // Final position
+    XMoveResizeWindow(dpy, c->win, x, y, w, h);
+
+    c->x = x; c->y = y; c->w = w; c->h = h;
 }
+
+
+
+void resize(Client *c, int x, int y, int w, int h, int interact) {
+    if (!c) return;
+
+    if (applysizehints(c, &x, &y, &w, &h, interact)) {
+        if (!c->isfloating)
+            resizeclient_animated(c, x, y, w, h);  // animate tiled windows
+        else
+            resizeclient(c, x, y, w, h);            // instant for floating
+    }
+}
+
+
+
 
 void resizebarwin(Monitor *m) {
   unsigned int w =floatbar? m->ww - 2 * m->gappov:m->ww;
@@ -2563,6 +2603,7 @@ void resizebarwin(Monitor *m) {
     XMoveResizeWindow(dpy, m->barwin, m->wx, m->by, w, bh);
   }
 }
+
 
 void resizeclient(Client *c, int x, int y, int w, int h) {
   XWindowChanges wc;
@@ -2585,6 +2626,7 @@ void resizeclient(Client *c, int x, int y, int w, int h) {
   configure(c);
   XSync(dpy, False);
 }
+
 void
 resizemouse(const Arg *arg)
 {
@@ -2741,37 +2783,6 @@ void sendmon(Client *c, Monitor *m) {
   arrange(NULL);
 }
 
-void setborderpx(const Arg *arg) {
-  Client *c;
-  int prev_borderpx = selmon->borderpx;
-
-  if (arg->i == 0)
-    selmon->borderpx = borderpx;
-  else if (selmon->borderpx + arg->i < 0)
-    selmon->borderpx = 0;
-  else
-    selmon->borderpx += arg->i;
-
-  for (c = selmon->clients; c; c = c->next) {
-    if (c->bw + arg->i < 0)
-      c->bw = selmon->borderpx = 0;
-    else
-      c->bw = selmon->borderpx;
-    if (c->isfloating || !selmon->lt[selmon->sellt]->arrange) {
-      if (arg->i != 0 && prev_borderpx + arg->i >= 0)
-        resize(c, c->x, c->y, c->w - (arg->i * 2), c->h - (arg->i * 2), 0);
-      else if (arg->i != 0)
-        resizeclient(c, c->x, c->y, c->w, c->h);
-      else if (prev_borderpx > borderpx)
-        resize(c, c->x, c->y, c->w + 2 * (prev_borderpx - borderpx),
-               c->h + 2 * (prev_borderpx - borderpx), 0);
-      else if (prev_borderpx < borderpx)
-        resize(c, c->x, c->y, c->w - 2 * (borderpx - prev_borderpx),
-               c->h - 2 * (borderpx - prev_borderpx), 0);
-    }
-  }
-  arrange(selmon);
-}
 
 void setclientstate(Client *c, long state) {
   long data[] = {state, None};
@@ -2873,7 +2884,8 @@ void setlayout(const Arg *arg) {
   if (arg && arg->v)
     selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt] = (Layout *)arg->v;
   strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol,
-          sizeof selmon->ltsymbol);
+          sizeof(selmon->ltsymbol) - 1);
+  selmon->ltsymbol[sizeof(selmon->ltsymbol) - 1] = '\0';
   if (selmon->sel)
     arrange(selmon);
   else

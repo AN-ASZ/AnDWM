@@ -7,9 +7,11 @@
 #include <cstring>
 #include <unistd.h>
 
-std::string clipboard_data = "";
-std::vector<unsigned char> image_data = {};
-std::string image_type = "";
+using namespace std;
+
+string clipboard_data = "";
+vector<unsigned char> image_data = {};
+string image_type = "";
 
 Atom UTF8;
 
@@ -27,7 +29,7 @@ void respond_to_request(Display* dpy, XSelectionRequestEvent* req) {
     Atom image_png = XInternAtom(dpy, "image/png", False);
 
     if (req->target == TARGETS) {
-        std::vector<Atom> targets = { UTF8, XA_STRING, image_png };
+        vector<Atom> targets = { UTF8, XA_STRING, image_png };
         XChangeProperty(dpy, req->requestor, req->property,
                         XA_ATOM, 32, PropModeReplace,
                         (unsigned char*)targets.data(), targets.size());
@@ -71,7 +73,7 @@ void fetch_clipboard(Display* dpy, Window win) {
 
 int main() {
     Display* dpy = XOpenDisplay(nullptr);
-    if (!dpy) { std::cerr << "Cannot open X display\n"; return 1; }
+    if (!dpy) { cerr << "Cannot open X display\n"; return 1; }
 
     Window win = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0);
 
@@ -80,7 +82,7 @@ int main() {
 
     int event_base, error_base;
     if (!XFixesQueryExtension(dpy, &event_base, &error_base)) {
-        std::cerr << "XFixes not available\n"; return 1;
+        cerr << "XFixes not available\n"; return 1;
     }
 
     XFixesSelectSelectionInput(dpy, DefaultRootWindow(dpy), clipboard,
@@ -128,10 +130,10 @@ int main() {
                         image_type = "image/png";
                     } else {
                         // Text data
-                        clipboard_data = std::string((char*)data, nitems);
+                        clipboard_data = string((char*)data, nitems);
                         image_data.clear();
                         image_type = "";
-                        std::cerr << "Clipboard: Text\n";
+                        cerr << "Clipboard: Text\n";
                     }
                     XFree(data);
 
