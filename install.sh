@@ -2,7 +2,7 @@
 set -e
 echo "This scripts is not fully runable and will return som error"
 echo "please run at you own RISK and always read what this scripts do with you machin"
-read -rp "Did you want to continue? (y/n): " ans
+read -rp "Did you want to continue? (y/N): " ans
 
 case "$ans" in
   y|Y)
@@ -67,7 +67,7 @@ if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
     sudo systemctl disable lxdm.service
 
     echo "=> Enabling LY..."
-    sudo systemctl enable ly.service
+    sudo systemctl enable ly@tty2.service
 else
     echo "=> Skipping LY install step."
 fi
