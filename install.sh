@@ -3,11 +3,16 @@ set -e
 echo "This scripts is not fully runable and will return som error"
 echo "please run at you own RISK and always read what this scripts do with you machin"
 read -rp "Did you want to continue? (y/n): " ans
-if [[ "$ans" != "Y" || "$ans" != "y" ]]; then
+
+case "$ans" in
+  y|Y)
+    echo "=> Be careful!"
+    ;;
+  *)
     exit 1
-else
-    echo "=> Be carefull !"
-fi
+    ;;
+esac
+
 sudo pacman -Syu
 
 echo "==> Installing/Updating yay..."
