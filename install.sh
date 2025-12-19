@@ -2,7 +2,7 @@
 set -e
 
 echo "==> Installing required packages..."
-sudo pacman -S --needed --noconfirm \
+yay pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom zen-browser-bin \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
