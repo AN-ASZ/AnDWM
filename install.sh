@@ -34,8 +34,7 @@ echo "==> Installing cursor..."
 yay -S --noconfirm --needed bibata-cursor-theme-bin
 
 echo "==> Installing greenclip..."
-yay -S --noconfirm --needed rofi-greenclip 
-yay -S --noconfirm --needed rofi-greenclip 
+yay -S --noconfirm --needed rofi-greenclip
 
 sudo cp -r AnDWM "$HOME"/.config/
 
@@ -62,7 +61,10 @@ if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
     cd ..
 
     echo "=> Disabling other display managers..."
-    sudo systemctl disable sddm.service lightdm.service gdm.service lxdm.service 2>/dev/null || true
+    sudo systemctl disable sddm.service
+    sudo systemctl disable lightdm.service
+    sudo systemctl disable gdm.service
+    sudo systemctl disable lxdm.service
 
     echo "=> Enabling LY..."
     sudo systemctl enable ly.service
