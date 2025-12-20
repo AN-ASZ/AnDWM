@@ -15,19 +15,27 @@ esac
 
 sudo pacman -Syu
 
-echo "==> Installing/Updating yay..."
-git clone https://aur.archlinux.org/yay.git
-cd yay
-makepkg -si
-cd ..
-rm -rf yay
+if ! command -v yay >/dev/null 2>&1; then
+    echo "yay not found, installing..."
+
+    sudo pacman -S --needed --noconfirm git base-devel
+
+    tmpdir=$(mktemp -d)
+    git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
+    (cd "$tmpdir/yay" && makepkg -si --noconfirm)
+
+    rm -rf "$tmpdir"
+else
+    echo "yay already installed, skipping"
+fi
 
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
     imlib2 dash kitty starship zsh exa \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
-    libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome wireless_tools xorg-xsetroot
+    libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
+    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset
 yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
@@ -94,7 +102,8 @@ sudo make install
 echo "==> Creating XSession entry..."
 DESKTOP_FILE="/usr/share/xsessions/AnDWM.desktop"
 
-sudo bash -c "cat > $DESKTOP_FILE" <<EOF
+sudo mkdir -p /usr/share/xsessions/
+sudo bash -c "cat > $DESKTOP_FILE" <<'EOF'
 [Desktop Entry]
 Name=AnDWM
 Comment=fork of chadwm makt it modern
