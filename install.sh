@@ -15,12 +15,19 @@ esac
 
 sudo pacman -Syu
 
-echo "==> Installing/Updating yay..."
-git clone https://aur.archlinux.org/yay.git
-cd yay
-makepkg -si
-cd ..
-rm -rf yay
+if ! command -v yay >/dev/null 2>&1; then
+    echo "yay not found, installing..."
+
+    sudo pacman -S --needed --noconfirm git base-devel
+
+    tmpdir=$(mktemp -d)
+    git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
+    (cd "$tmpdir/yay" && makepkg -si --noconfirm)
+
+    rm -rf "$tmpdir"
+else
+    echo "yay already installed, skipping"
+fi
 
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
