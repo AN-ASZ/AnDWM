@@ -95,6 +95,7 @@ sudo make install
 echo "==> Creating XSession entry..."
 DESKTOP_FILE="/usr/share/xsessions/AnDWM.desktop"
 
+sudo mkdir -p ~/.local/share/xsessions
 sudo bash -c "cat > $DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=AnDWM
