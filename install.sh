@@ -28,7 +28,7 @@ sudo pacman -S --needed --noconfirm \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
-    wireless_tools xorg-xsetroot wget
+    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr t xorg-xset
 yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
@@ -95,8 +95,8 @@ sudo make install
 echo "==> Creating XSession entry..."
 DESKTOP_FILE="/usr/share/xsessions/AnDWM.desktop"
 
-sudo mkdir -p ~/.local/share/xsessions
-sudo bash -c "cat > $DESKTOP_FILE" <<EOF
+sudo mkdir -p /usr/share/xsessions/
+sudo bash -c "cat > $DESKTOP_FILE" <<'EOF'"
 [Desktop Entry]
 Name=AnDWM
 Comment=fork of chadwm makt it modern
