@@ -35,7 +35,7 @@ sudo pacman -S --needed --noconfirm \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
-    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset
+    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw
 yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
