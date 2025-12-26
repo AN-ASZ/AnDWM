@@ -29,6 +29,9 @@ setxkbmap -layout us,th -option grp:win_space_toggle &
 
 /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
 
+# XDG autostart (Steam checkbox, etc.)
+dex -a -s ~/.config/autostart >/dev/null 2>&1 &
+
 systemctl --user start opentabletdriver &
 
 # Start DWM inside correct dbus session
