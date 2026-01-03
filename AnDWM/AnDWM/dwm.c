@@ -29,7 +29,12 @@
 #include <X11/keysym.h>
 #include <errno.h>
 #include <locale.h>
+#ifdef __linux__
+#include <sys/signal.h>
+#include <bits/sigaction.h>
+#else
 #include <signal.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -397,6 +402,10 @@ static void (*handler[LASTEvent])(XEvent *) = {
     [UnmapNotify] = unmapnotify};
 static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
 static int running = 1;
+/* When non-zero, tiled-resizes use animated transitions via
+ * resizeclient_animated. You can temporarily disable it to have
+ * instant resize via resizeclient. */
+static int animate_tiled = 1;
 static Cur *cursor[CurLast];
 static Clr **scheme, clrborder;
 static Display *dpy;
@@ -1194,7 +1203,9 @@ void dragcfact(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-
+  int prev_animate = animate_tiled;
+  /* disable animated tiled resize while dragging to use instant resizeclient */
+  animate_tiled = 0;
   prev_x = prev_y = -999999;
 
   do {
@@ -1234,6 +1245,7 @@ void dragcfact(const Arg *arg) {
 
 
   XUngrabPointer(dpy, CurrentTime);
+  animate_tiled = prev_animate;
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 }
@@ -1395,6 +1407,10 @@ void dragmfact(const Arg *arg) {
           CurrentTime) != GrabSuccess)
     return;
 
+  int prev_animate = animate_tiled;
+  /* disable animated tiled resize while dragging to use instant resizeclient */
+  animate_tiled = 0;
+
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
     switch (ev.type) {
@@ -1457,6 +1473,7 @@ void dragmfact(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
+  animate_tiled = prev_animate;
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 }
@@ -2250,24 +2267,43 @@ moveorplace(const Arg *arg) {
 
 void movemouse(const Arg *arg) {
   int x, y, ocx, ocy, nx, ny;
+  int rel_x, rel_y; // offset from window corner to mouse
+  int lastw = 0, lasth = 0;
   Client *c;
   Monitor *m;
   XEvent ev;
   Time lasttime = 0;
+  int was_tiled = 0;
 
   if (!(c = selmon->sel))
     return;
   if (c->isfullscreen) /* no support moving fullscreen windows by mouse */
     return;
+  if (!c->isfloating && selmon->lt[selmon->sellt]->arrange) {
+    was_tiled = 1;
+    togglefloating(NULL);
+  }
   restack(selmon);
   ocx = c->x;
   ocy = c->y;
-  
+  lastw = c->w;
+  lasth = c->h;
+
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
   if (!getrootptr(&x, &y))
     return;
+  /* Calculate offset from window top-left to mouse position */
+  rel_x = x - c->x;
+  rel_y = y - c->y;
+
+  /* Move window so mouse is at same relative position at drag start */
+  nx = x - rel_x;
+  ny = y - rel_y;
+  resize(c, nx, ny, c->w, c->h, 1);
+  ocx = nx;
+  ocy = ny;
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
     switch (ev.type) {
@@ -2281,8 +2317,21 @@ void movemouse(const Arg *arg) {
         continue;
       lasttime = ev.xmotion.time;
 
-      nx = ocx + (ev.xmotion.x - x);
-      ny = ocy + (ev.xmotion.y - y);
+      // If the window size changed (e.g. due to layout), keep mouse at same relative position
+      if (c->w != lastw || c->h != lasth) {
+        // Clamp rel_x/rel_y to new window size
+        if (rel_x > c->w) rel_x = c->w / 2;
+        if (rel_y > c->h) rel_y = c->h / 2;
+        nx = ev.xmotion.x - rel_x;
+        ny = ev.xmotion.y - rel_y;
+        resize(c, nx, ny, c->w, c->h, 1);
+        lastw = c->w;
+        lasth = c->h;
+        break;
+      }
+
+      nx = ev.xmotion.x - rel_x;
+      ny = ev.xmotion.y - rel_y;
       if (abs(selmon->wx - nx) < snap)
         nx = selmon->wx;
       else if (abs((selmon->wx + selmon->ww) - (nx + WIDTH(c))) < snap)
@@ -2291,17 +2340,18 @@ void movemouse(const Arg *arg) {
         ny = selmon->wy;
       else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
         ny = selmon->wy + selmon->wh - HEIGHT(c);
-      if (!c->isfloating && selmon->lt[selmon->sellt]->arrange &&
-          (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
-        togglefloating(NULL);
-      }
-      if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
-        resize(c, nx, ny, c->w, c->h, 1);
+      // Always keep floating while dragging; never toggle floating here
+      int neww = c->w, newh = c->h;
+      resize(c, nx, ny, neww, newh, 1);
       break;
     }
   } while (ev.type != ButtonRelease);
   
   XUngrabPointer(dpy, CurrentTime);
+  // If window was originally tiled, return to tiled after drag
+  if (was_tiled && c->isfloating) {
+    togglefloating(NULL);
+  }
   if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
     sendmon(c, m);
     selmon = m;
@@ -2583,10 +2633,13 @@ void resize(Client *c, int x, int y, int w, int h, int interact) {
     if (!c) return;
 
     if (applysizehints(c, &x, &y, &w, &h, interact)) {
-        if (!c->isfloating)
-            resizeclient_animated(c, x, y, w, h);  // animate tiled windows
+      if (!c->isfloating) {
+        if (animate_tiled)
+          resizeclient_animated(c, x, y, w, h);  // animate tiled windows
         else
-            resizeclient(c, x, y, w, h);            // instant for floating
+          resizeclient(c, x, y, w, h);            // instant for tiled
+      } else
+        resizeclient(c, x, y, w, h);            // instant for floating
     }
 }
 
