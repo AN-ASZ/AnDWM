@@ -11,6 +11,11 @@
 #include <algorithm>
 #include <vector>
 #include <cstdio>
+#include <thread>
+#include <chrono>
+#include <fcntl.h>
+#include <cerrno>
+
 
 using namespace std;
 
@@ -25,6 +30,128 @@ string teal="#a6da95";
 string green2="#a6da95";
 string teal2="#5BA643";
 string green3="#B8E9B4";
+
+//CPU Usage Fuction
+struct CpuTimes {
+    unsigned long long user = 0, nice = 0, system = 0, idle = 0;
+    unsigned long long iowait = 0, irq = 0, softirq = 0, steal = 0;
+
+    unsigned long long total() const {
+        return user + nice + system + idle + iowait + irq + softirq + steal;
+    }
+
+    unsigned long long active() const {
+        return total() - idle - iowait;
+    }
+};
+
+CpuTimes readCpuTimes() {
+    ifstream file("/proc/stat");
+    string line;
+    CpuTimes times;
+
+    if (file.is_open()) {
+        getline(file, line);
+        istringstream iss(line);
+        string cpuLabel;
+        iss >> cpuLabel >> times.user >> times.nice >> times.system >> times.idle
+            >> times.iowait >> times.irq >> times.softirq >> times.steal;
+    }
+
+    return times;
+}
+
+std::string getCpuUsageString() {
+    CpuTimes t1 = readCpuTimes();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CpuTimes t2 = readCpuTimes();
+
+    unsigned long long activeDiff = t2.active() - t1.active();
+    unsigned long long totalDiff  = t2.total() - t1.total();
+
+    double usage = 0.0;
+    if (totalDiff != 0)
+        usage = 100.0 * activeDiff / totalDiff;
+
+    // format like your original awk: "4.1f"
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%4.1f", usage);
+    return std::string(buffer);
+}
+
+//MEM Usage Fuction
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <iomanip>
+#include <cmath>
+
+using namespace std;
+
+// Read memory info from /proc/meminfo
+struct MemInfo {
+    unsigned long long total = 0;     // in KB
+    unsigned long long free = 0;      // MemFree
+    unsigned long long available = 0; // MemAvailable
+    unsigned long long used() const { return total - available; } // correct
+    double usedPercent() const { return total ? 100.0 * used() / total : 0.0; }
+};
+
+
+MemInfo readMemInfo() {
+    ifstream file("/proc/meminfo");
+    string line;
+    MemInfo mem;
+
+    if (!file.is_open()) return mem;
+
+    while (getline(file, line)) {
+        istringstream iss(line);
+        string key;
+        unsigned long long value;
+        string unit;
+        iss >> key >> value >> unit;
+
+        if (key == "MemTotal:") mem.total = value;
+        else if (key == "MemFree:") mem.free = value;
+        else if (key == "MemAvailable:") mem.available = value;
+    }
+
+    return mem;
+}
+
+// Helper: convert KB to human-readable string like "GiB" or "MiB"
+
+string formatMemory(double kb) {
+    double val = kb;
+    if (val >= 1024 * 1024) val /= (1024 * 1024); // GB
+    else if (val >= 1024) val /= 1024;            // MB
+
+    stringstream ss;
+    ss << fixed << setprecision(1) << val;
+    return ss.str();
+}
+
+
+// Replacement for your three exec() calls
+string getMemUsedStr() {
+    MemInfo mem = readMemInfo();
+    return formatMemory(mem.used()); // like "1234.5MB"
+}
+
+string getMemUnitStr() {
+    double kb = readMemInfo().used();
+    if (kb >= 1024 * 1024) return "Gi";
+    if (kb >= 1024) return "Mi";
+    return "kB";
+}
+
+string getMemPercentStr() {
+    MemInfo mem = readMemInfo();
+    int percent = static_cast<int>(round(mem.usedPercent()));
+    return to_string(percent); // "45" etc.
+}
 
 int g_scroll_index = 0;
 
@@ -142,15 +269,23 @@ int getStringWidth(const vector<string>& chars) {
     return width;
 }
 
-// Read file content
+// Read file content and return as string (empty on failure)
 string read_file(const string& path) {
-    ifstream file(path);
-    if (!file.is_open()) {
-        return "";
-    }
-    string content((istreambuf_iterator<char>(file)),
-                        istreambuf_iterator<char>());
-    return trim(content);
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return ""; // failed to open
+
+    char buf[256]; // sysfs files are small but allow more room
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+
+    if (n <= 0) return ""; // failed to read
+
+    buf[n] = '\0';
+
+    // Remove trailing newline if present
+    if (n > 0 && buf[n-1] == '\n') buf[n-1] = '\0';
+
+    return string(buf);
 }
 
 string battery() {
@@ -336,9 +471,9 @@ string player_info(const string& app) {
 
 string info_play() {
     // Get memory info
-    string free_output = exec("free -h | awk '/^Mem/ {used=$3; gsub(/i/,\"\",used); printf \"%4.1f\", used}'");
-    string mem_unit = trim(exec("free -h | awk '/^Mem/ {print $3}' | sed 's/[0-9.]*//g'"));
-    string mem_percent_str = trim(exec("free -m | awk '/^Mem/ {printf(\"%d\", $3*100/$2)}'"));
+    string free_output     = getMemUsedStr();
+    string mem_unit        = getMemUnitStr();
+    string mem_percent_str = getMemPercentStr();
     
     int mem_percent = mem_percent_str.empty() ? 0 : stoi(mem_percent_str);
     
@@ -394,9 +529,7 @@ string info_play() {
         g_scroll_index = 0;
 
         
-        // Get CPU info
-        string cpu_str = trim(exec("top -bn1 | awk '/Cpu\\(s\\)/ {usage = 100 - $8; printf \"%4.1f\", usage}'"));
-        
+        string cpu_str = getCpuUsageString();        
         result = "^c" + black + "^ ^b" + green + "^ ";
         result += "^c" + white + "^ ^b" + grey + "^ " + cpu_str + "% ^d^";
         result += "^c" + t_color + "^ ^b" + green + "^ " + icon;

@@ -92,8 +92,9 @@ sudo cp .Xresources "$HOME"
 echo "==> Building QOL Packages..."
 
 cd "$HOME/.config/AnDWM/scripts/"
-sudo g++ -Ofast -march=native cpp/claim-clip.cpp -o /usr/local/bin/claim-clip -lX11 -lXfixes
-sudo g++ -Ofast -march=native cpp/bar.cpp -o /usr/local/bin/bar -lX11 -lXfixes
+sudo g++ -Ofast -march=native cpp/bar.cpp -o bar.cpp -lX11 -lXfixes
+sudo g++ cpp/bat.cpp -o bat -std=c++17 -O2 -pthread -march=native
+sudo g++ cpp/isolate.cpp -o isolated -O2 -pthread -march=native
 
 echo "==> Building and installing AnDWM..."
 cd "$HOME/.config/AnDWM/AnDWM/"
