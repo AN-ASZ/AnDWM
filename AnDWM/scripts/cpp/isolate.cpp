@@ -8,6 +8,7 @@
 #include <fstream>
 #include <vector>
 #include <unordered_map>
+#include <numeric>
 
 using namespace std;
 
@@ -24,11 +25,15 @@ unordered_map<string, cpu_list> rules = {
     { "wired",          {1} }
 };
 
+
+
 cpu_list default_cpus = []() {
     cpu_list cpus;
     int count = sysconf(_SC_NPROCESSORS_ONLN);
-    for (int i = 1; i < count; ++i)
-        cpus.push_back(i);
+    if (count <= 1) return cpus;
+    int end = count - 1;
+    cpus.resize(end);
+    std::iota(cpus.begin(), cpus.end(), 1);
     return cpus;
 }();
 /* ========================================= */
