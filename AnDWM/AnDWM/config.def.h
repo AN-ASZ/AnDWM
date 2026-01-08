@@ -162,7 +162,7 @@ static const Key keys[] = {
     { MODKEY,                           XK_a,       spawn,          SHCMD("rofi -show drun -theme ~/.config/AnDWM/rofi/config.rasi") },
     { MODKEY,                           XK_Return,  spawn,          SHCMD("kitty") },
     { MODKEY,                           XK_e,       spawn,          SHCMD("nemo") },
-    { MODKEY,                           XK_b,       spawn,          SHCMD("PIPEWIRE_PROPS='{ node.force-rate=192000 }' MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_USE_XINPUT2=1 taskset -c 1-7 zen-browser") },
+    { MODKEY,                           XK_b,       spawn,          SHCMD("PIPEWIRE_PROPS='{ node.force-rate=192000 }' MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_USE_XINPUT2=1 zen-browser") },
     { MODKEY,                           XK_v,       spawn,          SHCMD("rofi -modi \"clipboard:greenclip print\" -show clipboard -run-command '{cmd}' -theme ~/.config/AnDWM/rofi/config_clip.rasi") },
     { MODKEY,                           XK_period,  spawn,          SHCMD("rofi -modi \"emoji:rofimoji --action copy --hidden-descriptions\" -show emoji -theme ~/.config/AnDWM/rofi/moji.rasi") },
     { MODKEY|ShiftMask,                 XK_c,       spawn,          SHCMD("~/.config/AnDWM/scripts/sh/highlight-pointer.sh") },
