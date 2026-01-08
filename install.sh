@@ -47,7 +47,7 @@ yay -S --noconfirm --needed rofi-greenclip
 sudo cp -r AnDWM "$HOME"/.config/
 
 echo "==> Installing fonts..."
-sudo pacman -S --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
+sudo pacman -S --noconfirm --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
 yay -S --noconfirm --needed ttf-iosevka
 mkdir -p ~/.local/share/fonts/
 cd ~/.local/share/fonts/
