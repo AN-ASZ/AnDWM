@@ -36,7 +36,8 @@ sudo pacman -S --needed --noconfirm \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
     wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iwl \
-    fish git nano fastfetch
+    fish git nano fastfetch less dex playerctl
+
 yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
@@ -91,16 +92,15 @@ sudo chmod -R a+rwX ~/.config
 sudo chown -R $USER:$USER ~/.config
 
 sudo cp -r .icons "$HOME"
-sudo cp usr/sbin/* /usr/sbin/
 sudo cp -r usr/share/* /usr/share
 sudo cp .Xresources "$HOME"
 
 echo "==> Building QOL Packages..."
 
 cd "$HOME/.config/AnDWM/scripts/"
-sudo g++ -Ofast -march=native cpp/bar.cpp -o bar.cpp -lX11 -lXfixes
-sudo g++ cpp/bat.cpp -o bat -std=c++17 -O2 -pthread -march=native
-sudo g++ cpp/isolate.cpp -o isolated -O2 -pthread -march=native
+sudo g++ -Ofast -march=native cpp/bar.cpp -o bar -lX11 -lXfixes
+sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
 
 echo "==> Building and installing AnDWM..."
 cd "$HOME/.config/AnDWM/AnDWM/"

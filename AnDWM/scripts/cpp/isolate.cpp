@@ -24,8 +24,13 @@ unordered_map<string, cpu_list> rules = {
     { "wired",          {1} }
 };
 
-cpu_list default_cpus = {1,2,3,4,5,6,7};
-
+cpu_list default_cpus = []() {
+    cpu_list cpus;
+    int count = sysconf(_SC_NPROCESSORS_ONLN);
+    for (int i = 1; i < count; ++i)
+        cpus.push_back(i);
+    return cpus;
+}();
 /* ========================================= */
 
 string read_comm(pid_t pid) {
