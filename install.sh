@@ -31,11 +31,12 @@ fi
 
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
-    imlib2 dash kitty starship zsh exa \
+    imlib2 dash kitty starship exa \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
-    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw
+    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iwl \
+    fish git nano fastfetch
 yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
@@ -83,7 +84,12 @@ fi
 echo "==> Copying dotfiles..."
 cd "$HOME/AnDWM/"
 sudo cp -r AnDWM "$HOME"/.config/
+
 sudo cp -r .config "$HOME"
+
+sudo chmod -R a+rwX ~/.config
+sudo chown -R $USER:$USER ~/.config
+
 sudo cp -r .icons "$HOME"
 sudo cp usr/sbin/* /usr/sbin/
 sudo cp -r usr/share/* /usr/share
