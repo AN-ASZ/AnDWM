@@ -91,10 +91,11 @@ sudo cp -r .config "$HOME"
 sudo chmod -R a+rwX ~/.config
 sudo chown -R $USER:$USER ~/.config
 
+sudo cp -r .icons "$HOME"
+
 sudo chmod -R a+rwX ~/.icons
 sudo chown -R $USER:$USER ~/.icons
 
-sudo cp -r .icons "$HOME"
 sudo cp -r usr/share/* /usr/share
 sudo cp .Xresources "$HOME"
 
