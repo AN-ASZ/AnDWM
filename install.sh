@@ -31,11 +31,13 @@ fi
 
 echo "==> Installing required packages..."
 sudo pacman -S --needed --noconfirm \
-    imlib2 dash kitty starship zsh exa \
+    imlib2 dash kitty starship exa \
     kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
     base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
     libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
-    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw
+    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw \
+    fish git nano fastfetch less dex playerctl
+
 yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
 
 echo "==> Installing cursor..."
@@ -47,7 +49,7 @@ yay -S --noconfirm --needed rofi-greenclip
 sudo cp -r AnDWM "$HOME"/.config/
 
 echo "==> Installing fonts..."
-sudo pacman -S --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
+sudo pacman -S --noconfirm --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
 yay -S --noconfirm --needed ttf-iosevka
 mkdir -p ~/.local/share/fonts/
 cd ~/.local/share/fonts/
@@ -83,17 +85,26 @@ fi
 echo "==> Copying dotfiles..."
 cd "$HOME/AnDWM/"
 sudo cp -r AnDWM "$HOME"/.config/
+
 sudo cp -r .config "$HOME"
+
+sudo chmod -R a+rwX ~/.config
+sudo chown -R $USER:$USER ~/.config
+
 sudo cp -r .icons "$HOME"
-sudo cp usr/sbin/* /usr/sbin/
+
+sudo chmod -R a+rwX ~/.icons
+sudo chown -R $USER:$USER ~/.icons
+
 sudo cp -r usr/share/* /usr/share
 sudo cp .Xresources "$HOME"
 
 echo "==> Building QOL Packages..."
 
 cd "$HOME/.config/AnDWM/scripts/"
-sudo g++ -Ofast -march=native cpp/claim-clip.cpp -o /usr/local/bin/claim-clip -lX11 -lXfixes
-sudo g++ -Ofast -march=native cpp/bar.cpp -o /usr/local/bin/bar -lX11 -lXfixes
+sudo g++ -Ofast -march=native cpp/bar.cpp -o bar -lX11 -lXfixes
+sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
 
 echo "==> Building and installing AnDWM..."
 cd "$HOME/.config/AnDWM/AnDWM/"
