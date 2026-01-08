@@ -20,8 +20,10 @@ fi
 feh --bg-fill /home/hi/.config/AnDWM/Wallpaper/Miku_plant.png
 xset r rate 200 20 &
 
-taskset -c 1 wired &
-taskset -c 1 /home/hi/.config/AnDWM/scripts/bar &
+sudo /home/hi/.config/AnDWM/scripts/bin/isolated &
+
+wired &
+/home/hi/.config/AnDWM/scripts/bin/bar &
 picom --config /home/hi/.config/AnDWM/scripts/picom.conf &
 
 greenclip daemon &
@@ -32,8 +34,7 @@ setxkbmap -layout us,th -option grp:win_space_toggle &
 # XDG autostart (Steam checkbox, etc.)
 dex -a -s ~/.config/autostart >/dev/null 2>&1 &
 
-#Battery critical cehck
-taskset -c 1 ~/.config/AnDWM/scripts/bat &
+~/.config/AnDWM/scripts/bin/bat &
 
 #systemctl --user start opentabletdriver &
 
