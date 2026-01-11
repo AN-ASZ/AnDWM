@@ -1,6 +1,6 @@
 # AnDWM 
 
-**AnDWM** is a modern, heavily customized fork of **dwm** (Dynamic Window Manager), inspired by **ChaDWM** and built for speed, aesthetics, and full keyboard control.
+**AnDWM** is a modern, heavily customized fork of **dwm** (Dynamic Window Manager), inspired(copy) by **ChaDWM** and built for speed, aesthetics, and full keyboard control.
 
 It follows the suckless philosophy but adds many quality-of-life features, custom utilities, and sane defaults for a modern Linux desktop.
 
@@ -23,8 +23,6 @@ It follows the suckless philosophy but adds many quality-of-life features, custo
 ---
 
 ## Requirements
-
-### Core
 
 * `Xorg (X11)`
 * `gcc`, `g++`, `make`, `sudo`
@@ -64,6 +62,12 @@ cd AnDWM
 chmod +x install.sh
 ./install.sh
 ```
+Tesed :
+
+* ``Arch Linux``
+
+Testing:
+* ``Debian``
 
 ### Method 2 — Manual
 *Clone git repository*
@@ -93,20 +97,32 @@ sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
 cd "$HOME/.config/AnDWM/AnDWM/"
 sudo make install
 ```
-*Create .Desktop file*
-```bash
+---
 
-sudo mkdir -p /usr/share/xsessions/
-sudo bash -c "cat > /usr/share/xsessions/" <<'EOF'
-[Desktop Entry]
-Name=AnDWM
-Comment=fork of chadwm makt it modern
-Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
-Type=Application
-EOF
+# Run AnDWM
+
+## With startx
+
+```shell
+startx ~/.config/AnDWM/scripts/run.sh
 ```
 
----
+## With Display Manager
+
+- Create a desktop entry (make sure to change `user` with your user):
+
+```shell
+sudo touch /usr/share/xsessions/AnDWM.desktop  
+```
+
+```
+[Desktop Entry]
+Name=chadwm
+Comment=dwm made beautiful 
+Exec=/home/user/.config/chadwm/scripts/./run.sh 
+Type=Application 
+```
+
 
 ## Main Configuration (`config.def.h`)
 
