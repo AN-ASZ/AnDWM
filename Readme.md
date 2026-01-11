@@ -149,7 +149,7 @@ Type=Application
 DWM configuration file:
 
 ```
-~/.config/AnDWM/AnDWM/config.h
+~/.config/AnDWM/AnDWM/config.def.h
 ```
 
 Controls:
@@ -163,8 +163,11 @@ Controls:
 * Bar behavior
 
 After editing:
+- You need to recompile dwm after every change you make to its source code.
 
-```bash
+```
+cd ~/.config/chadwm/chadwm
+rm config.h
 sudo make install
 ```
 
