@@ -292,22 +292,22 @@ How:
 
 ## Layouts
 
-| Symbol | Layout                   |   |                 |
-| ------ | ------------------------ | - | --------------- |
-| `[@]`  | Spiral (default)         |   |                 |
-| `:::`  | Gapless Grid             |   |                 |
-| `[\\]` | Dwindle                  |   |                 |
-| `[M]`  | Monocle                  |   |                 |
-| `[]=`  | Tile                     |   |                 |
-| `H[]`  | Deck                     |   |                 |
-| `TTT`  | Bottom Stack             |   |                 |
-| `===`  | Horizontal Bottom Stack  |   |                 |
-| `HHH`  | Grid                     |   |                 |
-| `###`  | N-Row Grid               |   |                 |
-| `---`  | Horizontal Grid          |   |                 |
-| `      | M                        | ` | Centered Master |
-| `>M>`  | Centered Floating Master |   |                 |
-| `><>`  | Floating                 |   |                 |
+| Symbol | Layout                   |
+| ------ | ------------------------ |
+| `[@]`  | Spiral (default)         |
+| `:::`  | Gapless Grid             |
+| `[\\]` | Dwindle                  |
+| `[M]`  | Monocle                  |
+| `[]=`  | Tile                     |
+| `H[]`  | Deck                     |
+| `TTT`  | Bottom Stack             |
+| `===`  | Horizontal Bottom Stack  |
+| `HHH`  | Grid                     |
+| `###`  | N-Row Grid               |
+| `---`  | Horizontal Grid          |
+| `      | M                        |
+| `>M>`  | Centered Floating Master |
+| `><>`  | Floating                 |
 
 ---
 
