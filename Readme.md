@@ -380,9 +380,9 @@ See `LICENSE` for details.
 ## Credits
 
 * **suckless.org** — dwm
-* **ChaDWM**
+* **ChaDWM** — ```https://github.com/siduck/chadwm```
 * Community patches & contributors
-```https://github.com/siduck/chadwm```
+
 
 ---
 
