@@ -24,7 +24,7 @@ if ! command -v yay >/dev/null 2>&1; then
     git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
     (cd "$tmpdir/yay" && makepkg -si --noconfirm)
 
-    rm -rf "$tmpdir"
+    sudo rm -rf "$tmpdir"
 else
     echo "yay already installed, skipping"
 fi

@@ -38,17 +38,34 @@ It follows the suckless philosophy but adds many quality-of-life features, custo
 * `eww`
 * `libnotify`
 * `glib2`
+* `ttf-iosevka-nerd`
+* `noto-fonts `
+* `noto-fonts-cjk`
+* `noto-fonts-extra` 
+* `ttf-hack-nerd`
+* `bibata-cursor-theme-bin`
 
 **Arch Linux example:**
 
+*install yay :*
 ```bash
-sudo pacman -S --needed --noconfirm \
-    imlib2 dash kitty starship exa \
-    kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
-    base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
-    libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
-    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw \
-    fish git nano fastfetch less dex playerctl
+sudo pacman -S --needed --noconfirm git base-devel
+tmpdir=$(mktemp -d)
+
+git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
+(cd "$tmpdir/yay" && makepkg -si --noconfirm)
+
+sudo rm -rf "$tmpdir"
+```
+
+*via pacman :*
+```bash
+sudo pacman -S --needed --noconfirm  imlib2 dash kitty starship exa kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw fish git nano fastfetch less dex playerctl ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
+```
+
+*via yay :*
+```bash
+yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git bibata-cursor-theme-bin rofi-greenclip ttf-iosevka
 ```
 
 ---
