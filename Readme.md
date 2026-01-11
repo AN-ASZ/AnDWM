@@ -24,6 +24,8 @@ It follows the suckless philosophy but adds many quality-of-life features, custo
 
 ## Requirements
 
+* `aur(yay)`
+
 * `Xorg (X11)`
 * `gcc`, `g++`, `make`, `sudo`
 * `libX11`, `libXft`, `libXinerama`
@@ -52,9 +54,9 @@ sudo pacman -S --needed --noconfirm \
 
 ---
 
-## Installation
+# Installation
 
-### Method 1 — Install Script (Recommended)
+## Method 1 — Install Script (Recommended)
 
 ```bash
 git clone https://github.com/AN-ASZ/AnDWM
@@ -66,33 +68,36 @@ Tesed :
 
 * ``Arch Linux``
 
-Testing:
+Testing :
 * ``Debian``
 
-### Method 2 — Manual
-*Clone git repository*
+## Method 2 — Manual
+### *Clone git repository*
 ```bash
 git clone https://github.com/AN-ASZ/AnDWM
 cd AnDWM
 ```
-*Copy all Dotfile*
+### *Copy all dotfile*
 ```bash
 sudo cp -r AnDWM "$HOME"/.config/
 cd "$HOME/AnDWM/"
 sudo cp -r .config "$HOME"
 sudo cp .Xresources "$HOME"
 ```
-*Compile QOF bin*
+### *Compile QOF bin*
 ```bash
 cd "$HOME/.config/AnDWM/scripts/"
-
+```
+```bash
 sudo g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
-
+```
+```bash
 sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
-
+```
+```bash
 sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
 ```
-*Compile DWM*
+### *Compile DWM*
 ```bash
 cd "$HOME/.config/AnDWM/AnDWM/"
 sudo make install
@@ -100,16 +105,15 @@ sudo make install
 ---
 
 # Run AnDWM
-
-## With startx
+### With startx
 
 ```shell
 startx ~/.config/AnDWM/scripts/run.sh
 ```
 
-## With Display Manager
+### With Display Manager
 
-- Create a desktop entry (make sure to change `user` with your user):
+* Create a desktop entry (make sure to change `user` with your user):
 
 ```shell
 sudo touch /usr/share/xsessions/AnDWM.desktop  
