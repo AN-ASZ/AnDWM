@@ -25,7 +25,6 @@ It follows the suckless philosophy but adds many quality-of-life features, custo
 ## Requirements
 
 * `aur(yay)`
-
 * `Xorg (X11)`
 * `gcc`, `g++`, `make`, `sudo`
 * `libX11`, `libXft`, `libXinerama`
@@ -225,9 +224,7 @@ Native battery monitoring with desktop notifications.
 * `libnotify`
 * `glib`
 
----
-* Recompile after changes:
-
+Recompile after changes:
 ```bash
 sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
 ```
@@ -263,19 +260,18 @@ Force specific processes (e.g. PipeWire, audio servers) to run on selected CPU c
 ```
 ~/.config/AnDWM/scripts/cpp/isolate.cpp
 ```
----
-
-Uses:
-* `/proc`
-* Linux scheduler APIs
-* CPU affinity (`taskset` logic in native code)
----
-
-* Recompile after changes:
+Recompile after changes :
 
 ```bash
 sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
 ```
+---
+
+How:
+* `/proc`
+* Linux scheduler APIs
+* CPU affinity (`taskset` logic in native code)
+---
 
 ## Layouts
 
