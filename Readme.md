@@ -311,22 +311,58 @@ How:
 
 ---
 
-## Keybindings
+# Keybindings
 
-> **MOD = Super / Windows key**
+> This configuration uses **Super** (Windows Key) as the primary `MODKEY`.
 
-### Essentials
+## System & Applications
 
-| Key               | Action              |
-| ----------------- | ------------------- |
-| `MOD + Enter`     | Terminal (Kitty)    |
-| `MOD + A`         | App launcher (Rofi) |
-| `MOD + E`         | File manager        |
-| `MOD + B`         | Browser             |
-| `MOD + Q`         | Kill window         |
-| `MOD + Shift + R` | Restart AnDWM       |
+| Key | Action |
+| --- | --- |
+| `MOD + Enter` | Open Terminal (**Kitty**) |
+| `MOD + A` | Open App Launcher (**Rofi**) |
+| `MOD + E` | Open File Manager (**Nemo**) |
+| `MOD + B` | Open Browser (**Zen Browser**) |
+| `MOD + V` | Clipboard Manager |
+| `MOD + .` | Emoji Picker |
+| `MOD + Shift + S` | Screenshot (Select Area) |
+| `MOD + Space` | Toggle Keyboard Layout (US/TH) |
 
-*(See `config.h` for the full keybinding list.)*
+## Window Management
+
+| Key | Action |
+| --- | --- |
+| `MOD + Q` | Close Focused Window |
+| `MOD + Shift + Q` | Force Kill Window |
+| `MOD + J` / `K` | Focus Next / Previous Window |
+| `MOD + Shift + J` / `K` | Move Window Position |
+| `MOD + W` | Toggle Floating Mode |
+| `MOD + F` | Toggle Fullscreen |
+| `MOD + H` | Hide (Minimize) Window |
+| `MOD + Shift + H` | Restore (Unminimize) Window |
+
+## Layout & Workspace
+
+| Key | Action |
+| --- | --- |
+| `MOD + T` | Spiral Layout (Default) |
+| `MOD + M` | Dwindle Layout |
+| `MOD + Shift + F` | Gapless Grid Layout |
+| `MOD + Ctrl + G` | Horizontal Grid Layout |
+| `MOD + [1-9]` | Switch Workspace |
+| `MOD + Shift + [1-9]` | Move Window to Workspace |
+| `MOD + Left` / `Right` | Cycle Through Workspaces |
+
+## Controls & Gaps
+
+| Key | Action |
+| --- | --- |
+| `MOD + Shift + R` | **Restart AnDWM** |
+| `MOD + Ctrl + B` | Show/Hide Status Bar |
+| `MOD + Ctrl + T` | Toggle Gaps On/Off |
+| `MOD + Ctrl + I` / `D` | Increase/Decrease All Gaps |
+| `Fn + Vol Up/Down` | System Volume |
+| `Fn + Brightness` | Screen Brightness |
 
 ---
 
