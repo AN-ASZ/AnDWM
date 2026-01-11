@@ -84,7 +84,6 @@ fi
 
 echo "==> Copying dotfiles..."
 cd "$HOME/AnDWM/"
-sudo cp -r AnDWM "$HOME"/.config/
 
 sudo cp -r .config "$HOME"
 
