@@ -369,17 +369,6 @@ How:
 
 ---
 
-## Screenshots
-```
-demo/
-├── desktop.png
-├── tiled.png
-└── floating.png
-```
-
-*Add your rice here*
-
----
 
 ## License
 
