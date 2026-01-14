@@ -89,7 +89,7 @@ Testing :
 
 ## Method 2 — Manual
 ### 1. Clone the Repository
-Clone the repository somewhere in your home directory:
+Clone the repository somewhere what you want:
 
 ```bash
 git clone https://github.com/an-asz/AnDWM.git
@@ -137,10 +137,9 @@ chown -R $USER:$USER ~/.config ~/.icons
 
 ---
 
-### 4. Copy System-Wide Files
+### 4. Copy System-Wide Themes/Icons Files
 
 require `sudo`
-Copy shared system resources
 
 ```bash
 sudo cp -r usr/share/* /usr/share/
@@ -170,13 +169,11 @@ fc-cache -fv
 
 ### 6. Build Internal Utilities (QOL Tools)
 
-Navigate to the scripts directory:
-
 ```bash
 cd ~/.config/AnDWM/scripts/
 ```
 
-Compile utilities:
+Compile :
 
 ```bash
 g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
@@ -192,29 +189,6 @@ g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
 cd ~/.config/AnDWM/AnDWM
 sudo make install
 ```
-
----
-
-### 8. Create XSession Entry
-
-Create the desktop entry manually:
-
-```bash
-sudo nano /usr/share/xsessions/AnDWM.desktop
-```
-
-Paste the following:
-
-```ini
-[Desktop Entry]
-Name=AnDWM
-Comment=fork of chadwm make it modern
-Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
-Type=Application
-```
-
-Save and exit.
-
 ---
 
 # Run AnDWM
@@ -226,22 +200,24 @@ startx ~/.config/AnDWM/scripts/run.sh
 
 ### With Display Manager
 
-* Create a desktop entry (make sure to change `user` with your user):
+Create the desktop entry :
 
-```shell
-sudo touch /usr/share/xsessions/AnDWM.desktop  
+```bash
+sudo nano /usr/share/xsessions/AnDWM.desktop
 ```
 
-```
+Paste the following:
+
+```ini
 [Desktop Entry]
-Name=chadwm
-Comment=dwm made beautiful 
-Exec=/home/user/.config/chadwm/scripts/./run.sh 
-Type=Application 
+Name=AnDWM
+Comment=DWM
+Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
+Type=Application
 ```
+Save and exit.
 
-
-## Main Configuration (`config.def.h`)
+# Main Configuration (`config.def.h`)
 
 DWM configuration file:
 
