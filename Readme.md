@@ -443,34 +443,15 @@ How:
 ---
 
 
-## License
-
-MIT License
-See `LICENSE` for details.
-
----
-
-## Credits
-
-* **suckless.org** — dwm
-* **ChaDWM** — ```https://github.com/siduck/chadwm```
-* Community patches & contributors
-
-
----
-
 ## Disclaimer
 
 AnDWM is **not a desktop environment**.
 and it just made for me only
 if you want to try out so ***Keep an eye on it***
 
-You are expected to configure:
 
-* Compositor
-* Wallpaper manager
-* Autostart apps
-* Status modules
+## Credits
 
-This is intentional — minimal and fast.
-
+* **suckless.org** — dwm
+* **ChaDWM** — ```https://github.com/siduck/chadwm```
+* Community patches & contributors
