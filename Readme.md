@@ -88,36 +88,133 @@ Testing :
 * ``Debian``
 
 ## Method 2 — Manual
-### *Clone git repository*
+### 1. Clone the Repository
+Clone the repository somewhere in your home directory:
+
 ```bash
-git clone https://github.com/AN-ASZ/AnDWM
+git clone https://github.com/an-asz/AnDWM.git
 cd AnDWM
 ```
-### *Copy all dotfile*
+---
+
+### 2. Copy Main Config Directory
+
+Copy the main AnDWM config folder into `~/.config`:
+
 ```bash
-sudo cp -r AnDWM "$HOME"/.config/
-cd "$HOME/AnDWM/"
-sudo cp -r .config "$HOME"
-sudo cp .Xresources "$HOME"
+cp -r AnDWM ~/.config/
 ```
-### *Compile QOF bin*
+
+Ensure correct permissions:
+
 ```bash
-cd "$HOME/.config/AnDWM/scripts/"
+chmod -R a+rwX ~/.config/AnDWM
+chown -R $USER:$USER ~/.config/AnDWM
 ```
+
+---
+
+### 3. Copy User Dotfiles
+
+Copy `.config`
+
 ```bash
-sudo g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
+cp -r .config ~/
 ```
+
+Copy icons
+
 ```bash
-sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+cp -r .icons ~/
 ```
+
+Fix permissions:
+
 ```bash
-sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
+chmod -R a+rwX ~/.config ~/.icons
+chown -R $USER:$USER ~/.config ~/.icons
 ```
-### *Compile DWM*
+
+---
+
+### 4. Copy System-Wide Files
+
+require `sudo`
+Copy shared system resources
+
 ```bash
-cd "$HOME/.config/AnDWM/AnDWM/"
+sudo cp -r usr/share/* /usr/share/
+```
+
+Copy Xresources
+
+```bash
+cp .Xresources ~/
+```
+
+---
+
+### 5. Fonts (Manual)
+
+If fonts are already installed, you may skip this step.
+
+If fonts are included in the repository:
+
+```bash
+mkdir -p ~/.local/share/fonts
+cp -r fonts/* ~/.local/share/fonts/
+fc-cache -fv
+```
+
+---
+
+### 6. Build Internal Utilities (QOL Tools)
+
+Navigate to the scripts directory:
+
+```bash
+cd ~/.config/AnDWM/scripts/
+```
+
+Compile utilities:
+
+```bash
+g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
+g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
+```
+
+---
+
+### 7. Build and Install AnDWM
+
+```bash
+cd ~/.config/AnDWM/AnDWM
 sudo make install
 ```
+
+---
+
+### 8. Create XSession Entry
+
+Create the desktop entry manually:
+
+```bash
+sudo nano /usr/share/xsessions/AnDWM.desktop
+```
+
+Paste the following:
+
+```ini
+[Desktop Entry]
+Name=AnDWM
+Comment=fork of chadwm make it modern
+Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
+Type=Application
+```
+
+Save and exit.
+
 ---
 
 # Run AnDWM
