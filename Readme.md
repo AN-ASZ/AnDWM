@@ -128,7 +128,7 @@ Copy icons
 cp -r .icons ~/
 ```
 
-Fix permissions:
+Ensure correct permissions:
 
 ```bash
 chmod -R a+rwX ~/.config ~/.icons
