@@ -454,4 +454,4 @@ if you want to try out so ***Keep an eye on it***
 
 * **suckless.org** — dwm
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
-* Community patches & contributors
+* Community patches & me
