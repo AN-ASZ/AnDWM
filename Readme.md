@@ -381,6 +381,9 @@ this project probably not working for you so feel free to blame my code
 <<<<<<< HEAD
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
 * Community patches & me
+<<<<<<< HEAD
 =======
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
 >>>>>>> Develop
+=======
+>>>>>>> 6e0fadfa5 (Update Readme.md)
