@@ -79,6 +79,16 @@ std::string getCpuUsageString() {
     return std::string(buffer);
 }
 
+//quate fix function
+string escape_quotes(std::string s) {
+    size_t pos = 0;
+    while ((pos = s.find('"', pos)) != std::string::npos) {
+        s.replace(pos, 1, "\\\"");
+        pos += 2;
+    }
+    return s;
+}
+
 //MEM Usage Fuction
 #include <iostream>
 #include <fstream>
@@ -380,10 +390,11 @@ string player_info(const string& app) {
     string green3 = "#B8E9B4";
     string blue = "#96CDFB";
 
+
     // Artist + Title
     string rawArtist = trim(exec(("playerctl -p " + app + " metadata --format '{{ artist }}'").c_str()));
     string ARTIST = formatArtist(rawArtist);
-    string TITLE = trim(exec(("playerctl -p " + app + " metadata --format '{{ title }}'").c_str())) + " ";
+    string TITLE = escape_quotes(trim(exec(("playerctl -p " + app + " metadata --format '{{ title }}'").c_str()))) + " ";
     string TEXT = !ARTIST.empty() ? "[" + ARTIST + "]  " + TITLE : TITLE;
 
     int SCROLL_WIDTH = 30;
