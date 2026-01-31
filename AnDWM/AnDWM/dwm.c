@@ -2809,8 +2809,6 @@ void resizeclient_animated(Client *c, int x, int y, int w, int h) {
     c->x = x; c->y = y; c->w = w; c->h = h;
 }
 
-
-
 void resize(Client *c, int x, int y, int w, int h, int interact) {
     if (!c) return;
 
@@ -2824,9 +2822,6 @@ void resize(Client *c, int x, int y, int w, int h, int interact) {
         resizeclient(c, x, y, w, h);            // instant for floating
     }
 }
-
-
-
 
 void resizebarwin(Monitor *m) {
   unsigned int w =floatbar? m->ww - 2 * m->gappov:m->ww;
