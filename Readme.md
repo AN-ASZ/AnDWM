@@ -2,24 +2,6 @@
 
 **AnDWM** is a modern, heavily customized fork of **dwm** (Dynamic Window Manager), inspired(copy) by **ChaDWM** and built for speed, aesthetics, and full keyboard control.
 
-It follows the suckless philosophy but adds many quality-of-life features, custom utilities, and sane defaults for a modern Linux desktop.
-
----
-
-## Features
-
-* Dynamic tiling window manager (X11)
-* Many layouts (spiral, grid, monocle, centered master, floating, etc.)
-* Advanced gaps control (inner / outer / horizontal / vertical)
-* Tab bar with previews
-* Systray support
-* Media keys (volume & brightness)
-* Multi-monitor aware
-* US / TH keyboard layout toggle
-* Custom bar, battery monitor, and process isolation tools
-* Catppuccin theme included
-* Lightweight & fast
-
 ---
 
 ## Requirements
@@ -34,16 +16,14 @@ It follows the suckless philosophy but adds many quality-of-life features, custo
 * `maim`
 * `xclip`
 * `light`
-* `pipewire-pulse`
-* `eww`
 * `libnotify`
 * `glib2`
 * `ttf-iosevka-nerd`
-* `noto-fonts `
-* `noto-fonts-cjk`
-* `noto-fonts-extra` 
-* `ttf-hack-nerd`
 * `bibata-cursor-theme-bin`
+
+see in install scripts for full optional package
+
+---
 
 **Arch Linux example:**
 
@@ -72,7 +52,8 @@ yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git bibata-cursor-th
 
 # Installation
 
-## Method 1 — Install Script (Recommended)
+## Method 1 — Install Script (Not Recommend)
+- hope this will work
 
 ```bash
 git clone https://github.com/AN-ASZ/AnDWM
@@ -84,40 +65,137 @@ Tesed :
 
 * ``Arch Linux``
 
-Testing :
+**DONT** :
 * ``Debian``
+* ``Other Random Distro``
+* ``Not Arch Base``
 
 ## Method 2 — Manual
-### *Clone git repository*
+### 1. Clone the Repository
+Clone the repository somewhere what you want:
+
 ```bash
-git clone https://github.com/AN-ASZ/AnDWM
+git clone https://github.com/an-asz/AnDWM.git
 cd AnDWM
 ```
-### *Copy all dotfile*
+---
+
+### 2. Copy Main Config Directory
+
+Copy the main AnDWM config folder into `~/.config`:
+
 ```bash
-sudo cp -r AnDWM "$HOME"/.config/
-cd "$HOME/AnDWM/"
-sudo cp -r .config "$HOME"
-sudo cp .Xresources "$HOME"
+cp -r AnDWM ~/.config/
 ```
-### *Compile QOF bin*
+
+Ensure correct permissions:
+
 ```bash
-cd "$HOME/.config/AnDWM/scripts/"
+chmod -R a+rwX ~/.config/AnDWM
+chown -R $USER:$USER ~/.config/AnDWM
 ```
+
+---
+
+### 3. Copy User Dotfiles
+
+Copy `.config`
+
 ```bash
-sudo g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
+cp -r .config ~/
 ```
+
+Copy icons
+
 ```bash
-sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+cp -r .icons ~/
 ```
+
+Ensure correct permissions:
+
 ```bash
-sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
+chmod -R a+rwX ~/.config ~/.icons
+chown -R $USER:$USER ~/.config ~/.icons
 ```
-### *Compile DWM*
+
+---
+
+### 4. Copy System-Wide Themes/Icons Files
+
+require `sudo`
+
 ```bash
-cd "$HOME/.config/AnDWM/AnDWM/"
+sudo cp -r usr/share/* /usr/share/
+```
+
+Copy Xresources
+
+```bash
+cp .Xresources ~/
+```
+
+---
+
+### 5. Fonts (Manual)
+
+If fonts are already installed, you may skip this step.
+
+If fonts are included in the repository:
+
+```bash
+mkdir -p ~/.local/share/fonts
+cp -r fonts/* ~/.local/share/fonts/
+fc-cache -fv
+```
+
+---
+
+### 6. Build Internal Utilities (QOL Tools)
+
+```bash
+cd ~/.config/AnDWM/scripts/
+```
+
+Compile :
+
+```bash
+g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
+g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+```
+
+---
+
+### 7. Build and Install AnDWM
+
+```bash
+cd ~/.config/AnDWM/AnDWM
 sudo make install
 ```
+---
+
+## Included Patch
+
+- [systray](https://gitlab.com/-/snippets/2184056)
+- systray iconsize
+- barpadding 
+- bottomstack
+- cfacts
+- dragmfact 
+- dragcfact (took from [bakkeby's build](https://github.com/bakkeby/dwm-flexipatch))
+- fibonacci
+- gaplessgrid
+- horizgrid
+- movestack 
+- vanity gaps
+- colorful tags
+- statuspadding 
+- status2d
+- underline tags
+- notitle
+- winicon
+- [preserveonrestart](https://github.com/PhyTech-R0/dwm-phyOS/blob/master/patches/dwm-6.3-patches/dwm-preserveonrestart-6.3.diff). This patch doesnt let all windows mix up into tag 1 after restarting dwm.
+- shiftview
+
 ---
 
 # Run AnDWM
@@ -129,22 +207,24 @@ startx ~/.config/AnDWM/scripts/run.sh
 
 ### With Display Manager
 
-* Create a desktop entry (make sure to change `user` with your user):
+Create the desktop entry :
 
-```shell
-sudo touch /usr/share/xsessions/AnDWM.desktop  
+```bash
+sudo nano /usr/share/xsessions/AnDWM.desktop
 ```
 
-```
+Paste the following:
+
+```ini
 [Desktop Entry]
-Name=chadwm
-Comment=dwm made beautiful 
-Exec=/home/user/.config/chadwm/scripts/./run.sh 
-Type=Application 
+Name=AnDWM
+Comment=DWM
+Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
+Type=Application
 ```
+Save and exit.
 
-
-## Main Configuration (`config.def.h`)
+# Main Configuration (`config.def.h`)
 
 DWM configuration file:
 
@@ -166,131 +246,36 @@ After editing:
 - You need to recompile dwm after every change you make to its source code.
 
 ```
-cd ~/.config/chadwm/chadwm
+cd ~/.config/AnDWM/AnDWM/
 rm config.h
 sudo make install
 ```
 
 ---
 
-## Additional Configuration Files
-
-in my rice have custom c++ file that include 
-* Isolated cpu for heavy load
-* custom statusbar write in cpp for 0% cpu usage + playerctl include
-* low battery notification for notebook
----
-
-### `bar.cpp` — Custom Status Bar
-
-**Purpose:**
-A lightweight custom status bar used instead of external bars like Polybar.
-
-**What it handles:**
-
-* Time / date
-* System info (CPU, memory, etc. depending on build)
-* Integration with dwm bar
-* Minimal overhead compared to script-based bars
-* media player indicator with playerctl
-
-**Configuration:**
-
-* Edit variables and modules directly in:
-
-  ```
-  ~/.config/AnDWM/scripts/cpp/bar.cpp
-  ```
-* Recompile after changes:
-
-  ```bash
-  sudo g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
-  ```
-
-**Why C++ instead of shell scripts?**
-
-* Faster updates
-* Lower CPU usage
-* No shell spawning
-
----
-
-### `bat.cpp` — Battery Monitor & Notifications
-
-**Purpose:**
-Native battery monitoring with desktop notifications.
-
-**Features:**
-
-* Reads battery info from `/sys/class/power_supply`
-* Sends notifications using `libnotify`
-* Alerts when battery is critically low
-* Extremely lightweight
-
-**Configurable values inside `bat.cpp`:**
-
-* Battery path (`BAT0`)
-* Low battery threshold (default: very low %)
-* Check interval
-
-**File location:**
+# Additional Configuration (`bar.cpp`)
+BAR configuration file:
 
 ```
-~/.config/AnDWM/scripts/cpp/bat.cpp
+~/.config/AnDWM/scripts/cpp/bar.cpp
 ```
 
-**Build dependency:**
+Feature:
 
-* `libnotify`
-* `glib`
+* Battery
+* CPU/RAM usage
+* Playing media name (While playing only)
+* WiFi name
+* Time
+* US/TH kb layout
 
-Recompile after changes:
-```bash
-sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
-```
-
----
-
-### `isolate.cpp` — Process CPU Isolation
-
-**Purpose:**
-Force specific processes (e.g. PipeWire, audio servers) to run on selected CPU cores.
-
-**Why this exists:**
-
-* Reduce audio glitches
-* Improve system responsiveness
-* Keep background services from stealing CPU time
-* keep cpu soft isolated while SCX schedule enable
-
-**Example use cases:**
-
-* Isolate `pipewire`
-* Isolate real-time audio/video services
-* Improve gaming / low-latency workloads
-
-**Configurable inside:**
-
-* Target process name(s)
-* CPU core mask
-* Scheduling behavior
-
-**File location:**
+After editing:
+- You need to recompile after every change you make to its source code.
 
 ```
-~/.config/AnDWM/scripts/cpp/isolate.cpp
+cd ~/.config/AnDWM/scripts
+sudo g++ -O2 -march=native /cpp/bar.cpp -o /bin/bar -lX11 -lXfixes
 ```
-Recompile after changes :
-
-```bash
-sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
-```
----
-
-How:
-* `/proc`
-* Linux scheduler APIs
-* CPU affinity (`taskset` logic in native code)
 ---
 
 ## Layouts
@@ -343,6 +328,7 @@ How:
 | `MOD + F` | Toggle Fullscreen |
 | `MOD + H` | Hide (Minimize) Window |
 | `MOD + Shift + H` | Restore (Unminimize) Window |
+| `MOD + Shift + B` | Make focus app into background |
 
 ## Layout & Workspace
 
@@ -370,34 +356,14 @@ How:
 ---
 
 
-## License
+## Note
+AnDWM is **not a desktop environment**.
+and it just made to work for me only
+if you want to try out so ***Keep an eye on it***
+this project probably not working for you so feel free to blame my code
 
-MIT License
-See `LICENSE` for details.
-
----
 
 ## Credits
 
 * **suckless.org** — dwm
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
-* Community patches & contributors
-
-
----
-
-## Disclaimer
-
-AnDWM is **not a desktop environment**.
-and it just made for me only
-if you want to try out so ***Keep an eye on it***
-
-You are expected to configure:
-
-* Compositor
-* Wallpaper manager
-* Autostart apps
-* Status modules
-
-This is intentional — minimal and fast.
-
