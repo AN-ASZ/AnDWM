@@ -17,12 +17,12 @@ using cpu_list = vector<int>;
 /* ================= RULES ================= */
 
 unordered_map<string, cpu_list> rules = {
-    { "pipewire",       {0,1} },
-    { "wireplumber",    {0,1} },
-    { "pipewire-pulse", {0,1} },
-    { "bat",            {1} },
-    { "bar",            {1} },
-    { "wired",          {1} }
+    { "pipewire",       {1} },
+    { "wireplumber",    {1} },
+    { "pipewire-pulse", {1} },
+    { "bat",            {0} },
+    { "bar",            {0} },
+    { "wired",          {0} }
 };
 
 
