@@ -4,6 +4,13 @@
 
 ---
 
+## Demo
+
+
+https://github.com/user-attachments/assets/d47fd978-35b7-4f38-9909-73d7a0f3478c
+
+
+
 ## Requirements
 
 * `aur(yay)`
@@ -161,10 +168,7 @@ Compile :
 ```bash
 g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
 g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
-<<<<<<< HEAD
 g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
-=======
->>>>>>> Develop
 ```
 
 ---
@@ -358,29 +362,14 @@ sudo g++ -O2 -march=native /cpp/bar.cpp -o /bin/bar -lX11 -lXfixes
 | `Fn + Brightness` | Screen Brightness |
 
 ---
-
-
-<<<<<<< HEAD
-## Disclaimer
-
-AnDWM is **not a desktop environment**.
-and it just made for me only
-if you want to try out so ***Keep an eye on it***
-=======
 ## Note
 AnDWM is **not a desktop environment**.
 and it just made to work for me only
 if you want to try out so ***Keep an eye on it***
 this project probably not working for you so feel free to blame my code
->>>>>>> Develop
 
 
 ## Credits
 
 * **suckless.org** — dwm
-<<<<<<< HEAD
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
-* Community patches & me
-=======
-* **ChaDWM** — ```https://github.com/siduck/chadwm```
->>>>>>> Develop
