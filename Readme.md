@@ -362,8 +362,6 @@ sudo g++ -O2 -march=native /cpp/bar.cpp -o /bin/bar -lX11 -lXfixes
 | `Fn + Brightness` | Screen Brightness |
 
 ---
-
-=======
 ## Note
 AnDWM is **not a desktop environment**.
 and it just made to work for me only
@@ -375,7 +373,3 @@ this project probably not working for you so feel free to blame my code
 
 * **suckless.org** — dwm
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
-* Community patches & me
-=======
-* **ChaDWM** — ```https://github.com/siduck/chadwm```
-=======
