@@ -168,10 +168,7 @@ Compile :
 ```bash
 g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
 g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
-<<<<<<< HEAD
 g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
-=======
->>>>>>> Develop
 ```
 
 ---
@@ -366,31 +363,19 @@ sudo g++ -O2 -march=native /cpp/bar.cpp -o /bin/bar -lX11 -lXfixes
 
 ---
 
-
-<<<<<<< HEAD
-## Disclaimer
-
-AnDWM is **not a desktop environment**.
-and it just made for me only
-if you want to try out so ***Keep an eye on it***
 =======
 ## Note
 AnDWM is **not a desktop environment**.
 and it just made to work for me only
 if you want to try out so ***Keep an eye on it***
 this project probably not working for you so feel free to blame my code
->>>>>>> Develop
 
 
 ## Credits
 
 * **suckless.org** — dwm
-<<<<<<< HEAD
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
 * Community patches & me
-<<<<<<< HEAD
 =======
 * **ChaDWM** — ```https://github.com/siduck/chadwm```
->>>>>>> Develop
 =======
->>>>>>> 6e0fadfa5 (Update Readme.md)
