@@ -4,6 +4,9 @@
 
 ---
 
+## Demo
+[Demo video](demo/demo.mp4)
+
 ## Requirements
 
 * `aur(yay)`
