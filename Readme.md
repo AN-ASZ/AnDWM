@@ -5,7 +5,9 @@
 ---
 
 ## Demo
-[Demo video](demo/demo.mp4)
+Uploading output_720p_10mb.mp4…
+
+
 
 ## Requirements
 
