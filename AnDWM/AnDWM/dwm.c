@@ -198,6 +198,13 @@ struct Client {
   int bw, oldbw;
   unsigned int tags;
   int isfixed, iscentered, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
+  int issticky;           /* sticky to background */
+  int stickeystate;       /* previous state before being sticky */
+  int prevfloating;
+  int prevx, prevy;
+  int prevw, prevh;
+  int wasfloating;
+  unsigned int oldtags;
  	unsigned int icw, ich; Picture icon;
 	int beingmoved;
   Client *next;
@@ -339,6 +346,7 @@ static void tagmon(const Arg *arg);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglefullscr(const Arg *arg);
+static void togglesticky(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void freeicon(Client *c);
@@ -416,6 +424,8 @@ static Window root, wmcheckwin;
 #define hiddenWinStackMax 100
 static int hiddenWinStackTop = -1;
 static Client* hiddenWinStack[hiddenWinStackMax];
+
+static Client *stickywin = NULL; // remembers the current sticky window
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -1769,6 +1779,10 @@ void focus(Client *c) {
   if (!c || (!ISVISIBLE(c) || HIDDEN(c)))
     for (c = selmon->stack; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->snext)
       ;
+  /* skip sticky windows */
+  if (c && c->issticky) {
+    c = NULL;
+  }
   if (selmon->sel && selmon->sel != c)
     unfocus(selmon->sel, 0);
   if (c) {
@@ -1816,18 +1830,18 @@ void focusstack(const Arg *arg) {
   if (!selmon->sel || (selmon->sel->isfullscreen && lockfullscreen))
     return;
   if (arg->i > 0) {
-    for (c = selmon->sel->next; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->next)
+    for (c = selmon->sel->next; c && (!ISVISIBLE(c) || HIDDEN(c) || c->issticky); c = c->next)
       ;
     if (!c)
-      for (c = selmon->clients; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->next)
+      for (c = selmon->clients; c && (!ISVISIBLE(c) || HIDDEN(c) || c->issticky); c = c->next)
         ;
   } else {
     for (i = selmon->clients; i != selmon->sel; i = i->next)
-      if (ISVISIBLE(i) && !HIDDEN(i))
+      if (ISVISIBLE(i) && !HIDDEN(i) && !i->issticky)
         c = i;
     if (!c)
       for (; i; i = i->next)
-        if (ISVISIBLE(i) && !HIDDEN(i))
+        if (ISVISIBLE(i) && !HIDDEN(i) && !i->issticky)
           c = i;
   }
   if (c) {
@@ -1840,8 +1854,8 @@ void
 focuswin(const Arg* arg){
 	int iwin = arg->i;
 	Client* c = NULL;
-	for(c = selmon->clients; c && (iwin || !ISVISIBLE(c)) ; c = c->next){
-		if(ISVISIBLE(c)) --iwin;
+	for(c = selmon->clients; c && (iwin || !ISVISIBLE(c)); c = c->next){
+		if(ISVISIBLE(c) && !c->issticky) --iwin;
 	};
 	if(c) {
 		focus(c);
@@ -2034,6 +2048,170 @@ void keypress(XEvent *e) {
       keys[i].func(&(keys[i].arg));
 }
 
+
+int
+countwindows(void)
+{
+    Client *c;
+    int count = 0;
+
+    for (c = selmon->clients; c; c = c->next) {
+        if (ISVISIBLE(c)) // only count windows visible on current tag
+            count++;
+    }
+
+    return count;
+}
+
+static const char *
+getclientclass(Client *c)
+{
+    static char class[256];  // static buffer
+    XClassHint ch = {NULL, NULL};
+
+    if (!c || !c->win)
+        return NULL;
+
+    if (XGetClassHint(dpy, c->win, &ch)) {
+        if (ch.res_class) {
+            strncpy(class, ch.res_class, sizeof(class) - 1);
+            class[sizeof(class) - 1] = '\0';
+        } else {
+            class[0] = '\0';
+        }
+
+        if (ch.res_name)
+            XFree(ch.res_name);
+        if (ch.res_class)
+            XFree(ch.res_class);
+
+        return class;
+    }
+    return NULL;
+}
+
+int picom_state = 0;
+const char *class_name; // Renamed to avoid confusion with C++ 'class' keyword
+
+void
+togglepicom(const Arg *arg)
+{
+    Client *c = selmon->sel;
+    if (!c) return;
+    
+    //Display *dpy = dpy; // dwm already has 'dpy' as the Display*
+    Window win = c->win; // the X11 window of the client
+    
+    Atom myAtom = XInternAtom(dpy, "_STICK_PROP", False);
+    const char *value = "on";
+
+    char cmd[512]; // Increased buffer for safety
+
+    // Use == for comparison!
+    if (picom_state == 0) {
+      XChangeProperty(dpy, win, myAtom, XA_STRING, 8, PropModeReplace,
+         (unsigned char*)value, strlen(value));
+        // Use $HOME instead of ~ for better reliability in system()
+        class_name = getclientclass(c);
+        if (class_name && strcmp(class_name, "mpv") == 0){
+          snprintf(cmd, sizeof(cmd), "$HOME/.config/AnDWM/scripts/sh/dynblur.sh %s", class_name);
+          system(cmd);
+        }
+
+        picom_state = 1;
+    } else {
+      XDeleteProperty(dpy, win, myAtom);
+      picom_state = 0;
+      if (class_name && strcmp(class_name, "mpv") == 0){
+        snprintf(cmd, sizeof(cmd), "$HOME/.config/AnDWM/scripts/sh/dynblur.sh %s", class_name);
+        system(cmd);
+      }
+    }
+    XSync(dpy, False);
+}
+
+unsigned int stick_state;
+Client *target;
+void
+togglesticky(const Arg *arg)
+{
+    Monitor *m = selmon; // current monitor
+    Client *c = selmon->sel;
+
+    if (stick_state && !target) {
+        // Sticky mode but no target window, nothing to do
+        return;
+    }
+
+    if (!stick_state && (!c || c->isfullscreen))
+        return;
+
+    if (stick_state == 0) {
+        // Make sticky
+        c->oldtags = c->tags;
+        c->tags = TAGMASK;
+        target = c;
+        togglepicom(NULL);
+
+        stickywin = c;
+        c->issticky = 1;
+
+        c->wasfloating = c->isfloating;
+        if (c->isfloating) {
+            c->prevx = c->x;
+            c->prevy = c->y;
+            c->prevw = c->w;
+            c->prevh = c->h;
+        }
+
+        c->isfloating = 1;
+
+        resizeclient(c, -1, -1, DisplayWidth(dpy, DefaultScreen(dpy)), DisplayHeight(dpy, DefaultScreen(dpy)));
+
+        detachstack(c);
+        c->snext = m->stack;
+        m->stack = c;
+
+        XLowerWindow(dpy, c->win);
+        arrange(m);
+
+        stick_state = 1;
+    } else {
+        // Unstick
+        c = target;
+        if (!c) return;
+
+        c->tags = selmon->tagset[selmon->seltags];
+        togglepicom(NULL);
+
+        if (stickywin) {
+            stickywin->issticky = 0;
+            c->issticky = 0;
+
+            if (stickywin->wasfloating) {
+                stickywin->isfloating = 1;
+                resizeclient(stickywin,
+                             stickywin->prevx,
+                             stickywin->prevy,
+                             stickywin->prevw,
+                             stickywin->prevh);
+            } else {
+                stickywin->isfloating = 0;
+            }
+
+            detachstack(stickywin);
+            attachstack(stickywin);
+            arrange(m);
+
+            stickywin = NULL;
+        }
+
+        stick_state = 0;
+        target = NULL;
+    }
+}
+
+
 void killclient(const Arg *arg) {
   if (!selmon->sel)
     return;
@@ -2047,7 +2225,11 @@ void killclient(const Arg *arg) {
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
+  if((countwindows == 1) && (stick_state == 1)){
+    togglesticky(NULL);
+  }
 }
+
 
 void
 forcekillclient(const Arg *arg)
@@ -2635,7 +2817,7 @@ void resize(Client *c, int x, int y, int w, int h, int interact) {
     if (applysizehints(c, &x, &y, &w, &h, interact)) {
       if (!c->isfloating) {
         if (animate_tiled)
-          resizeclient_animated(c, x, y, w, h);  // animate tiled windows
+          resizeclient_animated(c, x, y, w, h); // this function make animation relly play of windows move
         else
           resizeclient(c, x, y, w, h);            // instant for tiled
       } else
@@ -2777,7 +2959,7 @@ void restack(Monitor *m) {
     wc.stack_mode = Below;
     wc.sibling = m->barwin;
     for (c = m->stack; c; c = c->snext)
-      if (!c->isfloating && ISVISIBLE(c)) {
+      if (!c->isfloating && !c->issticky && ISVISIBLE(c)) {
         XConfigureWindow(dpy, c->win, CWSibling | CWStackMode, &wc);
         wc.sibling = c->win;
       }
@@ -3249,6 +3431,7 @@ void togglebar(const Arg *arg) {
   arrange(selmon);
 }
 
+
 void togglefloating(const Arg *arg) {
   if (!selmon->sel)
     return;
@@ -3265,6 +3448,8 @@ void togglefullscr(const Arg *arg) {
   if (selmon->sel)
     setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
 }
+
+
 
 void toggletag(const Arg *arg) {
   unsigned int newtags;
