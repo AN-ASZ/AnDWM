@@ -152,13 +152,13 @@ static const Key keys[] = {
 
     // brightness and audio 
     {0,             XF86XK_AudioLowerVolume,    spawn, {.v = downvol}},
-	{0,             XF86XK_AudioMute, spawn,    {.v = mutevol }},
+	{0,             XF86XK_AudioMute,           spawn,    {.v = mutevol }},
 	{0,             XF86XK_AudioRaiseVolume,    spawn, {.v = upvol}},
 	{0,				XF86XK_MonBrightnessUp,     spawn,	{.v = light_up}},
 	{0,				XF86XK_MonBrightnessDown,   spawn,	{.v = light_down}},
 
     // screenshot fullscreen and cropped
-    { MODKEY|ShiftMask,     		XK_s,       spawn,          SHCMD("maim -s ~/Pictures/Screenshots/tmp.png && xclip -selection clipboard -t image/png -i ~/Pictures/Screenshots/tmp.png") },
+    { MODKEY|ShiftMask,     		    XK_s,       spawn,          SHCMD("maim -s ~/Pictures/Screenshots/tmp.png && xclip -selection clipboard -t image/png -i ~/Pictures/Screenshots/tmp.png") },
     { MODKEY,                           XK_a,       spawn,          SHCMD("rofi -show drun -theme ~/.config/AnDWM/rofi/config.rasi") },
     { MODKEY,                           XK_Return,  spawn,          SHCMD("kitty") },
     { MODKEY,                           XK_e,       spawn,          SHCMD("nemo") },

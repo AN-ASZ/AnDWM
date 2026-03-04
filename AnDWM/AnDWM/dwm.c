@@ -313,6 +313,7 @@ static void removesystrayicon(Client *i);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
 static void resizeclient(Client *c, int x, int y, int w, int h);
+static void resizeclient_animated(Client *c, int x, int y, int w, int h);
 static void resizemouse(const Arg *arg);
 static void resizerequest(XEvent *e);
 static void restack(Monitor *m);
@@ -413,7 +414,7 @@ static int running = 1;
 /* When non-zero, tiled-resizes use animated transitions via
  * resizeclient_animated. You can temporarily disable it to have
  * instant resize via resizeclient. */
-static int animate_tiled = 1;
+static Bool animate_tiled = 1;
 static Cur *cursor[CurLast];
 static Clr **scheme, clrborder;
 static Display *dpy;
@@ -2131,84 +2132,62 @@ togglepicom(const Arg *arg)
 }
 
 unsigned int stick_state;
-Client *target;
 void
 togglesticky(const Arg *arg)
 {
-    Monitor *m = selmon; // current monitor
-    Client *c = selmon->sel;
-
-    if (stick_state && !target) {
-        // Sticky mode but no target window, nothing to do
-        return;
-    }
-
-    if (!stick_state && (!c || c->isfullscreen))
+    // 1. Safety check: ensure we have a monitor and a client to act on
+    if (!selmon || (!selmon->sel && !stickywin))
         return;
 
-    if (stick_state == 0) {
-        // Make sticky
-        c->oldtags = c->tags;
-        c->tags = TAGMASK;
-        target = c;
-        togglepicom(NULL);
+    Client *c = stickywin ? stickywin : selmon->sel;
 
+    // Don't mess with fullscren windows
+    if (c->isfullscreen)
+        return;
+
+    if (!stickywin) {
+        /* MAKE STICKY */
         stickywin = c;
         c->issticky = 1;
-
+        
+        // Save state
+        c->oldtags = c->tags;
+        c->tags = TAGMASK; // Visible on all tags
+        togglepicom(NULL); 
+        
         c->wasfloating = c->isfloating;
-        if (c->isfloating) {
-            c->prevx = c->x;
-            c->prevy = c->y;
-            c->prevw = c->w;
-            c->prevh = c->h;
-        }
+        c->prevx = c->x;
+        c->prevy = c->y;
+        c->prevw = c->w;
+        c->prevh = c->h;
 
         c->isfloating = 1;
 
-        resizeclient(c, -1, -1, DisplayWidth(dpy, DefaultScreen(dpy)), DisplayHeight(dpy, DefaultScreen(dpy)));
+        // Use monitor dimensions (m->mw/mh) instead of DisplayWidth
+        // This prevents the window from bleeding into other monitors
+        resizeclient_animated(c, (selmon->mx)-1, (selmon->my)-1, selmon->mw, selmon->mh);
 
+        // Move to bottom of stack so it doesn't cover new windows
         detachstack(c);
-        c->snext = m->stack;
-        m->stack = c;
-
+        attachstack(c); // Or a custom attachbottom(c) if you have one
+        
         XLowerWindow(dpy, c->win);
-        arrange(m);
-
-        stick_state = 1;
     } else {
-        // Unstick
-        c = target;
-        if (!c) return;
-
-        c->tags = selmon->tagset[selmon->seltags];
+        /* UNSTICK */
+        c->issticky = 0;
+        c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
+        
+        c->isfloating = c->wasfloating;
         togglepicom(NULL);
-
-        if (stickywin) {
-            stickywin->issticky = 0;
-            c->issticky = 0;
-
-            if (stickywin->wasfloating) {
-                stickywin->isfloating = 1;
-                resizeclient(stickywin,
-                             stickywin->prevx,
-                             stickywin->prevy,
-                             stickywin->prevw,
-                             stickywin->prevh);
-            } else {
-                stickywin->isfloating = 0;
-            }
-
-            detachstack(stickywin);
-            attachstack(stickywin);
-            arrange(m);
-
-            stickywin = NULL;
+        if (c->isfloating) {
+            resizeclient(c, c->prevx, c->prevy, c->prevw, c->prevh);
         }
 
-        stick_state = 0;
-        target = NULL;
+        stickywin = NULL;
     }
+
+    focus(NULL);
+    arrange(selmon);
 }
 
 
@@ -2838,14 +2817,15 @@ void resizebarwin(Monitor *m) {
 void resizeclient(Client *c, int x, int y, int w, int h) {
   XWindowChanges wc;
 
-  c->oldx = c->x;
-  c->x = wc.x = x;
-  c->oldy = c->y;
-  c->y = wc.y = y;
   c->oldw = c->w;
   c->w = wc.width = w;
   c->oldh = c->h;
   c->h = wc.height = h;
+  c->oldx = c->x;
+  c->x = wc.x = x;
+  c->oldy = c->y;
+  c->y = wc.y = y;
+
 
 	if (c->beingmoved)
 		return;
@@ -3140,6 +3120,9 @@ void setcfact(const Arg *arg) {
     f = 0.25;
   else if (f > 4.0)
     f = 4.0;
+  Bool prev_animate = animate_tiled;
+  animate_tiled = 0;
+  animate_tiled = prev_animate;
   c->cfact = f;
   arrange(selmon);
 }
@@ -3153,8 +3136,11 @@ void setmfact(const Arg *arg) {
   f = arg->f < 1.0 ? arg->f + selmon->mfact : arg->f - 1.0;
   if (f < 0.05 || f > 0.95)
     return;
+  Bool prev_animate = animate_tiled;
+  animate_tiled = 0;
   selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag] = f;
   arrange(selmon);
+  animate_tiled = prev_animate;
 }
 
 void setup(void) {
@@ -3444,8 +3430,6 @@ void togglefullscr(const Arg *arg) {
     setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
 }
 
-
-
 void toggletag(const Arg *arg) {
   unsigned int newtags;
 
@@ -3456,9 +3440,9 @@ void toggletag(const Arg *arg) {
     selmon->sel->tags = newtags;
     setclienttagprop(selmon->sel);
     focus(NULL);
+    updatecurrentdesktop();
     arrange(selmon);
   }
-  	updatecurrentdesktop();
 }
 
 void toggleview(const Arg *arg) {
@@ -3493,11 +3477,10 @@ void toggleview(const Arg *arg) {
 		if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
 			togglebar(NULL);
 
-
+    updatecurrentdesktop();
     focus(NULL);
     arrange(selmon);
   }
-    	updatecurrentdesktop();
 }
 
 void hidewin(const Arg *arg) {
@@ -4026,10 +4009,11 @@ void view(const Arg *arg) {
 	selmon->lt[selmon->sellt^1] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt^1];
 
 	if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
-		togglebar(NULL);
+	togglebar(NULL);
+
+  updatecurrentdesktop();
   focus(NULL);
   arrange(selmon);
-  	updatecurrentdesktop();
 }
 
 Client *wintoclient(Window w) {
