@@ -15,10 +15,13 @@
 #include <chrono>
 #include <fcntl.h>
 #include <cerrno>
-
+#include <iomanip>
+#include <map>
+#include <sdbus-c++/sdbus-c++.h>
 
 using namespace std;
 
+// --- Global Colors ---
 string black="#1E1D2D";
 string green="#a6e3a1";
 string white="#D9E0EE";
@@ -31,156 +34,21 @@ string green2="#a6da95";
 string teal2="#5BA643";
 string green3="#B8E9B4";
 
-//CPU Usage Fuction
-struct CpuTimes {
-    unsigned long long user = 0, nice = 0, system = 0, idle = 0;
-    unsigned long long iowait = 0, irq = 0, softirq = 0, steal = 0;
-
-    unsigned long long total() const {
-        return user + nice + system + idle + iowait + irq + softirq + steal;
-    }
-
-    unsigned long long active() const {
-        return total() - idle - iowait;
-    }
-};
-
-CpuTimes readCpuTimes() {
-    ifstream file("/proc/stat");
-    string line;
-    CpuTimes times;
-
-    if (file.is_open()) {
-        getline(file, line);
-        istringstream iss(line);
-        string cpuLabel;
-        iss >> cpuLabel >> times.user >> times.nice >> times.system >> times.idle
-            >> times.iowait >> times.irq >> times.softirq >> times.steal;
-    }
-
-    return times;
-}
-
-std::string getCpuUsageString() {
-    CpuTimes t1 = readCpuTimes();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    CpuTimes t2 = readCpuTimes();
-
-    unsigned long long activeDiff = t2.active() - t1.active();
-    unsigned long long totalDiff  = t2.total() - t1.total();
-
-    double usage = 0.0;
-    if (totalDiff != 0)
-        usage = 100.0 * activeDiff / totalDiff;
-
-    // format like your original awk: "4.1f"
-    char buffer[16];
-    std::snprintf(buffer, sizeof(buffer), "%4.1f", usage);
-    return std::string(buffer);
-}
-
-//quate fix function
-string escape_quotes(std::string s) {
-    size_t pos = 0;
-    while ((pos = s.find('"', pos)) != std::string::npos) {
-        s.replace(pos, 1, "\\\"");
-        pos += 2;
-    }
-    return s;
-}
-
-//MEM Usage Fuction
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <iomanip>
-#include <cmath>
-
-using namespace std;
-
-// Read memory info from /proc/meminfo
-struct MemInfo {
-    unsigned long long total = 0;     // in KB
-    unsigned long long free = 0;      // MemFree
-    unsigned long long available = 0; // MemAvailable
-    unsigned long long used() const { return total - available; } // correct
-    double usedPercent() const { return total ? 100.0 * used() / total : 0.0; }
-};
-
-
-MemInfo readMemInfo() {
-    ifstream file("/proc/meminfo");
-    string line;
-    MemInfo mem;
-
-    if (!file.is_open()) return mem;
-
-    while (getline(file, line)) {
-        istringstream iss(line);
-        string key;
-        unsigned long long value;
-        string unit;
-        iss >> key >> value >> unit;
-
-        if (key == "MemTotal:") mem.total = value;
-        else if (key == "MemFree:") mem.free = value;
-        else if (key == "MemAvailable:") mem.available = value;
-    }
-
-    return mem;
-}
-
-// Helper: convert KB to human-readable string like "GiB" or "MiB"
-
-string formatMemory(double kb) {
-    double val = kb;
-    if (val >= 1024 * 1024) val /= (1024 * 1024); // GB
-    else if (val >= 1024) val /= 1024;            // MB
-
-    stringstream ss;
-    ss << fixed << setprecision(1) << val;
-    return ss.str();
-}
-
-
-// Replacement for your three exec() calls
-string getMemUsedStr() {
-    MemInfo mem = readMemInfo();
-    return formatMemory(mem.used()); // like "1234.5MB"
-}
-
-string getMemUnitStr() {
-    double kb = readMemInfo().used();
-    if (kb >= 1024 * 1024) return "Gi";
-    if (kb >= 1024) return "Mi";
-    return "kB";
-}
-
-string getMemPercentStr() {
-    MemInfo mem = readMemInfo();
-    int percent = static_cast<int>(round(mem.usedPercent()));
-    return to_string(percent); // "45" etc.
-}
-
 int g_scroll_index = 0;
 
-// Utility function to execute shell command and capture output
-string exec(const char* cmd) {
-    array<char, 128> buffer;
-    string result;
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) {
-        return "";
-    }
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        result += buffer.data();
-    }
-    pclose(pipe);
-    return result;
+// --- DBus Connections ---
+sdbus::IConnection& getBus() {
+    static auto connection = sdbus::createSessionBusConnection();
+    return *connection;
 }
 
-// Utility function to trim whitespace
+sdbus::IConnection& getSystemBus() {
+    static auto connection = sdbus::createSystemBusConnection();
+    return *connection;
+}
+
+// --- Utility Functions ---
+
 string trim(const string& str) {
     size_t first = str.find_first_not_of(" \t\n\r");
     if (first == string::npos) return "";
@@ -188,389 +56,363 @@ string trim(const string& str) {
     return str.substr(first, (last - first + 1));
 }
 
-// Format artist: uppercase + remove " - TOPIC"
-string formatArtist(const string& artist) {
-    string res = artist;
-    transform(res.begin(), res.end(), res.begin(), ::toupper);
-    string suffix = " - TOPIC";
-    if (res.size() >= suffix.size() &&
-        res.compare(res.size() - suffix.size(), suffix.size(), suffix) == 0) {
-        res.erase(res.size() - suffix.size());
+string exec(const char* cmd) {
+    array<char, 128> buffer;
+    string result;
+    FILE* pipe = popen(cmd, "r");
+    if (!pipe) return "";
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        result += buffer.data();
+    }
+    pclose(pipe);
+    return result;
+}
+
+string read_file(const string& path) {
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return "";
+    char buf[256];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return "";
+    buf[n] = '\0';
+    string s(buf);
+    if (!s.empty() && s.back() == '\n') s.pop_back();
+    return s;
+}
+
+string escape_quotes(string s) {
+    string res;
+    for (char c : s) {
+        if (c == '"') res += "\\\"";
+        else res += c;
     }
     return res;
 }
 
-// Split UTF-8 string into characters
+// --- NetworkManager DBus Logic ---
+
+struct WifiStatus {
+    string ssid = "Disconnected";
+    int strength = 0;
+    bool is_up = false;
+};
+
+WifiStatus get_wifi_info() {
+    WifiStatus status;
+    try {
+        auto& connection = getSystemBus(); 
+        auto nmProxy = sdbus::createProxy(connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"}, sdbus::ObjectPath{"/org/freedesktop/NetworkManager"});
+
+        sdbus::Variant vActiveConn;
+        nmProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                .withArguments("org.freedesktop.NetworkManager", "PrimaryConnection").storeResultsTo(vActiveConn);
+        auto activeConnPath = vActiveConn.get<sdbus::ObjectPath>();
+
+        if (activeConnPath.empty() || activeConnPath == "/") return status;
+
+        auto connProxy = sdbus::createProxy(connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"}, activeConnPath);
+        sdbus::Variant vDevices;
+        connProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                 .withArguments("org.freedesktop.NetworkManager.Connection.Active", "Devices").storeResultsTo(vDevices);
+        auto devices = vDevices.get<vector<sdbus::ObjectPath>>();
+
+        if (devices.empty()) return status;
+
+        auto deviceProxy = sdbus::createProxy(connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"}, devices[0]);
+        sdbus::Variant vDeviceType;
+        deviceProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                   .withArguments("org.freedesktop.NetworkManager.Device", "DeviceType").storeResultsTo(vDeviceType);
+
+        if (vDeviceType.get<uint32_t>() == 2) { // Wi-Fi
+            status.is_up = true;
+            sdbus::Variant vApPath;
+            deviceProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                       .withArguments("org.freedesktop.NetworkManager.Device.Wireless", "ActiveAccessPoint").storeResultsTo(vApPath);
+            auto apPath = vApPath.get<sdbus::ObjectPath>();
+
+            auto apProxy = sdbus::createProxy(connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"}, apPath);
+            sdbus::Variant vSsid, vStrength;
+            apProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                   .withArguments("org.freedesktop.NetworkManager.AccessPoint", "Ssid").storeResultsTo(vSsid);
+            apProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                   .withArguments("org.freedesktop.NetworkManager.AccessPoint", "Strength").storeResultsTo(vStrength);
+
+            auto ssidVec = vSsid.get<vector<uint8_t>>();
+            status.ssid = string(ssidVec.begin(), ssidVec.end());
+            status.strength = (int)vStrength.get<uint8_t>();
+        }
+    } catch (...) {
+        status.is_up = false;
+    }
+    return status;
+}
+
+// --- Hardware Info Functions ---
+
+struct CpuTimes {
+    unsigned long long user = 0, nice = 0, system = 0, idle = 0;
+    unsigned long long iowait = 0, irq = 0, softirq = 0, steal = 0;
+    unsigned long long total() const { return user + nice + system + idle + iowait + irq + softirq + steal; }
+    unsigned long long active() const { return total() - idle - iowait; }
+};
+
+CpuTimes readCpuTimes() {
+    ifstream file("/proc/stat");
+    string line;
+    CpuTimes times;
+    if (getline(file, line)) {
+        istringstream iss(line);
+        string label;
+        iss >> label >> times.user >> times.nice >> times.system >> times.idle
+            >> times.iowait >> times.irq >> times.softirq >> times.steal;
+    }
+    return times;
+}
+
+string getCpuUsageString() {
+    static CpuTimes t1 = readCpuTimes();
+    CpuTimes t2 = readCpuTimes();
+    unsigned long long activeDiff = t2.active() - t1.active();
+    unsigned long long totalDiff  = t2.total() - t1.total();
+    t1 = t2;
+    double usage = (totalDiff > 0) ? (100.0 * activeDiff / totalDiff) : 0.0;
+    char buffer[16];
+    snprintf(buffer, sizeof(buffer), "%4.1f", usage);
+    return string(buffer);
+}
+
+struct MemInfo {
+    unsigned long long total = 0, free = 0, available = 0;
+    unsigned long long used() const { return total - available; }
+    double usedPercent() const { return total ? 100.0 * used() / total : 0.0; }
+};
+
+MemInfo readMemInfo() {
+    ifstream file("/proc/meminfo");
+    string line, key, unit;
+    unsigned long long value;
+    MemInfo mem;
+    while (getline(file, line)) {
+        istringstream iss(line);
+        iss >> key >> value >> unit;
+        if (key == "MemTotal:") mem.total = value;
+        else if (key == "MemFree:") mem.free = value;
+        else if (key == "MemAvailable:") mem.available = value;
+    }
+    return mem;
+}
+
+string formatMemory(double kb) {
+    double val = kb;
+    string unit = "Ki";
+    if (val >= 1024 * 1024) { val /= (1024 * 1024); unit = "Gi"; }
+    else if (val >= 1024) { val /= 1024; unit = "Mi"; }
+    stringstream ss;
+    ss << fixed << setprecision(1) << val;
+    return ss.str();
+}
+
+string getMemUsedStr() { return formatMemory(readMemInfo().used()); }
+string getMemUnitStr() {
+    double kb = readMemInfo().used();
+    if (kb >= 1024 * 1024) return "Gi";
+    if (kb >= 1024) return "Mi";
+    return "kB";
+}
+string getMemPercentStr() { return to_string((int)round(readMemInfo().usedPercent())); }
+
+// --- Text/Unicode Handling ---
+
 vector<string> utf8ToChars(const string& str) {
     vector<string> chars;
     for (size_t i = 0; i < str.size();) {
         unsigned char c = str[i];
-        size_t char_len = 1;
-        if ((c & 0x80) == 0) char_len = 1;
-        else if ((c & 0xE0) == 0xC0) char_len = 2;
-        else if ((c & 0xF0) == 0xE0) char_len = 3;
-        else if ((c & 0xF8) == 0xF0) char_len = 4;
-        chars.push_back(str.substr(i, char_len));
-        i += char_len;
+        size_t len = 1;
+        if ((c & 0x80) == 0) len = 1;
+        else if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        chars.push_back(str.substr(i, len));
+        i += len;
     }
     return chars;
 }
 
-// Get display width of a UTF-8 character (East Asian Width aware)
-// Returns 0 for combining characters (Thai vowels/tones, accents), 
-// 2 for wide characters (CJK), 1 for normal characters
 int getCharWidth(const string& utf8char) {
-    if (utf8char.length() < 2) return 1; // ASCII
-    
+    if (utf8char.length() < 1) return 0;
     unsigned char c1 = utf8char[0];
-    unsigned char c2 = utf8char[1];
-    unsigned char c3 = (utf8char.length() > 2) ? utf8char[2] : 0;
-    
-    // Thai combining characters and vowels (E0 B8 - E0 B9 range)
-    // ี ่ ์ ๊ ๋ ํ ุ ู and other Thai diacritics/vowels
-    if (c1 == 0xE0 && (c2 == 0xB8 || c2 == 0xB9)) {
-        // Thai block - check for combining marks
-        // Thai vowels above: ิ ี ึ ื (0xB8 0xB4-0xB7)
-        // Thai tone marks: ่ ้ ๊ ๋ (0xB9 0x88-0x8B)
-        // Thai vowel below: ั ุ ู (0xB8 0xB1-0xB3)
-        // Thai mai kham: ํ (0xB8 0xB3)
-        if ((c2 == 0xB8 && (c3 >= 0xB1 && c3 <= 0xB7)) ||
-            (c2 == 0xB9 && (c3 >= 0x88 && c3 <= 0x8B))) {
-            return 0; // Combining character - zero width
+    if (c1 < 0x80) return 1;
+    if (utf8char.length() >= 3) {
+        unsigned char c2 = utf8char[1];
+        unsigned char c3 = utf8char[2];
+        if (c1 == 0xE0 && (c2 == 0xB8 || c2 == 0xB9)) {
+            if ((c2 == 0xB8 && (c3 >= 0xB1 && c3 <= 0xB7)) || (c2 == 0xB9 && (c3 >= 0x88 && c3 <= 0x8B))) return 0;
         }
     }
-    
-    // General Unicode combining marks and diacritics (U+0300 to U+036F)
-    if (c1 == 0xCC || (c1 == 0xCD && c2 <= 0xAF)) {
-        return 0; // Zero width combining marks
-    }
-    
-    // Zero Width Joiner, Zero Width Non-Joiner, etc.
-    if (c1 == 0xE2 && c2 == 0x80 && (c3 == 0x8C || c3 == 0x8D)) {
-        return 0;
-    }
-    
-    // CJK Unified Ideographs (Chinese/Japanese/Korean characters)
-    if (c1 == 0xE4 || c1 == 0xE5 || c1 == 0xE6 || c1 == 0xE7 || c1 == 0xE8 || 
-        c1 == 0xE9 || c1 == 0xEA || c1 == 0xEB) {
-        return 2;
-    }
-    
-    // CJK Unified Ideographs Extension
-    if (c1 == 0xF0 && (c2 == 0xA0 || c2 == 0xA1 || c2 == 0xA2 || c2 == 0xA3 || 
-                       c2 == 0xA4 || c2 == 0xA5 || c2 == 0xA6 || c2 == 0xA7)) {
-        return 2;
-    }
-    
-    // Hiragana and Katakana
-    if (c1 == 0xE3 && (c2 == 0x81 || c2 == 0x82 || c2 == 0x83)) {
-        return 2;
-    }
-    
-    return 1; // Default single width
+    if (c1 >= 0xE4 && c1 <= 0xEB) return 2;
+    return 1;
 }
 
-// Calculate total display width of a string
 int getStringWidth(const vector<string>& chars) {
     int width = 0;
-    for (const auto& ch : chars) {
-        width += getCharWidth(ch);
-    }
+    for (const auto& ch : chars) width += getCharWidth(ch);
     return width;
 }
 
-// Read file content and return as string (empty on failure)
-string read_file(const string& path) {
-    int fd = open(path.c_str(), O_RDONLY);
-    if (fd < 0) return ""; // failed to open
-
-    char buf[256]; // sysfs files are small but allow more room
-    ssize_t n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-
-    if (n <= 0) return ""; // failed to read
-
-    buf[n] = '\0';
-
-    // Remove trailing newline if present
-    if (n > 0 && buf[n-1] == '\n') buf[n-1] = '\0';
-
-    return string(buf);
+string formatArtist(const string& artist) {
+    string res = artist;
+    transform(res.begin(), res.end(), res.begin(), ::toupper);
+    string suffix = " - TOPIC";
+    if (res.size() >= suffix.size() && res.compare(res.size() - suffix.size(), suffix.size(), suffix) == 0)
+        res.erase(res.size() - suffix.size());
+    return res;
 }
 
-string battery() {
-    string capacity_str = read_file("/sys/class/power_supply/BAT0/capacity");
-    string charging_str = read_file("/sys/class/power_supply/AC0/online");
-    
-    if (capacity_str.empty() || charging_str.empty()) {
-        return "";
-    }
-    
-    int capacity = stoi(capacity_str);
-    int charging = stoi(charging_str);
-    string icon;
-    
-    if (charging == 1) {
-        icon = "󰂄 ";
-    } else if (capacity >= 90) {
-        icon = "󰁹 ";
-    } else if (capacity >= 80) {
-        icon = "󰂂 ";
-    } else if (capacity >= 70) {
-        icon = "󰂁 ";
-    } else if (capacity >= 60) {
-        icon = "󰂀 ";
-    } else if (capacity >= 50) {
-        icon = "󰁿 ";
-    } else if (capacity >= 40) {
-        icon = "󰁾 ";
-    } else if (capacity >= 30) {
-        icon = "󰁽 ";
-    } else if (capacity >= 20) {
-        icon = "󰁼 ";
-    } else if (capacity >= 10) {
-        icon = "󰁻 ";
-    } else {
-        icon = "󰁺 ";
-    }
-    
-    char buffer[64];
-    snprintf(buffer, sizeof(buffer), "^c%s^%s%d%%", blue.c_str(), icon.c_str(), capacity);
-    return string(buffer);
-}
+// --- Status Components ---
 
 string clock_time() {
     time_t now = time(nullptr);
     tm* timeinfo = localtime(&now);
     char buffer[16];
     strftime(buffer, sizeof(buffer), "%H:%M", timeinfo);
-    
-    string result = "^c" + black + "^ ^b" + darkblue + "^ 󱑆 ";
-    result += "^c" + black + "^^b" + blue + "^ " + string(buffer) + " ";
-    result += "^d^" + ("^c" + blue + "^");
-    return result;
+    return "^c" + black + "^ ^b" + darkblue + "^ 󱑆 ^c" + black + "^^b" + blue + "^ " + string(buffer) + " ^d^^c" + blue + "^";
 }
 
 string kb_layout() {
     string layout = trim(exec("xkblayout-state print \"%s\" | tr '[:lower:]' '[:upper:]'"));
-    if (layout.empty()) {
-        return "";
-    }
-    
-    string result = "^c" + black + "^ ^b" + blue + "^ " + layout + " ";
-    result += "^d^" + ("^c" + blue + "^");
-    return result;
+    if (layout.empty()) return "";
+    return "^c" + black + "^ ^b" + blue + "^ " + layout + " ^d^^c" + blue + "^";
 }
 
+// --- DBus Player Logic ---
+
 string get_playing_player() {
-    string players = trim(exec("playerctl -l 2>/dev/null"));
-    if (players.empty()) {
-        return "";
-    }
-    
-    istringstream iss(players);
-    string player;
-    while (getline(iss, player)) {
-        player = trim(player);
-        if (player.empty()) continue;
-        
-        string cmd = "playerctl -p " + player + " status 2>/dev/null";
-        string status = trim(exec(cmd.c_str()));
-        if (status == "Playing") {
-            return player;
+    try {
+        auto& connection = getBus();
+        auto proxy = sdbus::createProxy(connection, sdbus::ServiceName{"org.freedesktop.DBus"}, sdbus::ObjectPath{"/org/freedesktop/DBus"});
+        vector<string> names;
+        proxy->callMethod("ListNames").onInterface("org.freedesktop.DBus").storeResultsTo(names);
+        for (const auto& name : names) {
+            if (name.find("org.mpris.MediaPlayer2.") != 0) continue;
+            auto playerProxy = sdbus::createProxy(connection, sdbus::ServiceName{name}, sdbus::ObjectPath{"/org/mpris/MediaPlayer2"});
+            sdbus::Variant vStatus;
+            playerProxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                       .withArguments("org.mpris.MediaPlayer2.Player", "PlaybackStatus").storeResultsTo(vStatus);
+            if (vStatus.get<string>() == "Playing") return name;
         }
-    }
+    } catch (...) {}
     return "";
 }
 
 string player_info(const string& app) {
-    // Colors
-    string black = "#1E1D2D";
-    string green2 = "#a6da95";
-    string green3 = "#B8E9B4";
-    string blue = "#96CDFB";
+    try {
+        auto& connection = getBus();
+        auto proxy = sdbus::createProxy(connection, sdbus::ServiceName{app}, sdbus::ObjectPath{"/org/mpris/MediaPlayer2"});
+        sdbus::Variant vMetadata;
+        proxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+             .withArguments("org.mpris.MediaPlayer2.Player", "Metadata").storeResultsTo(vMetadata);
+        auto metaMap = vMetadata.get<map<string, sdbus::Variant>>();
 
-
-    // Artist + Title
-    string rawArtist = trim(exec(("playerctl -p " + app + " metadata --format '{{ artist }}'").c_str()));
-    string ARTIST = formatArtist(rawArtist);
-    string TITLE = escape_quotes(trim(exec(("playerctl -p " + app + " metadata --format '{{ title }}'").c_str()))) + " ";
-    string TEXT = !ARTIST.empty() ? "[" + ARTIST + "]  " + TITLE : TITLE;
-
-    int SCROLL_WIDTH = 30;
-
-    // ===== Scroll index now global =====
-    int& i = g_scroll_index;     // reference → modifies global
-    // ===================================
-
-    // UTF-8 safe processing
-    vector<string> chars = utf8ToChars(TEXT);
-    int TEXT_LEN = chars.size();
-    if (i >= TEXT_LEN) i = 0;
-
-    // Duplicate for looping animation
-    vector<string> SCROLL_CHARS = chars;
-    SCROLL_CHARS.insert(SCROLL_CHARS.end(), chars.begin(), chars.end());
-
-    // Playback
-    double pos = 0.0, len = 1.0;
-    string posStr = trim(exec(("playerctl -p " + app + " position").c_str()));
-    string lenStr = trim(exec(("playerctl -p " + app + " metadata mpris:length").c_str()));
-    if (!posStr.empty()) pos = stod(posStr);
-    if (!lenStr.empty()) len = stod(lenStr) / 1000000.0;
-
-    string SLICE_BEFORE, SLICE_AFTER, LAST_BLOCK;
-    double mapped;
-    //calculate percentage 0-90%
-    double percent = (pos / len) * 100.0;
-
-    // Adjust scroll width if text shorter than bar
-    int textWidth = getStringWidth(chars);
-    if (textWidth <= SCROLL_WIDTH) {
-        SCROLL_WIDTH = textWidth; // use actual visual width
-        i = 0;
-        mapped = min(percent / 0.95, 100.0);  // map 0–85% to 0–100%
-    } else {
-        mapped = min(percent / 0.855, 100.0);  // map 0–90% to 0–100%
-        if (percent >= 95) {
-            LAST_BLOCK = "^c" + green2 + "^^b" + green2 + "^ ";
-        } else {
-            LAST_BLOCK = " ";
+        string rawArtist = "Unknown Artist";
+        if (metaMap.count("xesam:artist")) {
+            try { rawArtist = metaMap["xesam:artist"].get<vector<string>>()[0]; }
+            catch (...) { try { rawArtist = metaMap["xesam:artist"].get<string>(); } catch (...) {} }
         }
-    }
+        string TITLE = metaMap.count("xesam:title") ? metaMap["xesam:title"].get<string>() : "Unknown Track";
+        string TEXT = formatArtist(rawArtist) + "  " + TITLE + " ";
+        TEXT = escape_quotes(TEXT);
 
-    int progress_width = static_cast<int>((mapped / 100.0) * SCROLL_WIDTH);
+        double pos = 0, len = 0;
+        try {
+            sdbus::Variant vPos;
+            proxy->callMethod("Get").onInterface("org.freedesktop.DBus.Properties")
+                 .withArguments("org.mpris.MediaPlayer2.Player", "Position").storeResultsTo(vPos);
+            try { pos = vPos.get<int64_t>() / 1000000.0; } catch (...) { pos = vPos.get<uint64_t>() / 1000000.0; }
+        } catch (...) {}
+        
+        if (metaMap.count("mpris:length")) {
+            try { len = metaMap["mpris:length"].get<int64_t>() / 1000000.0; }
+            catch (...) { len = metaMap["mpris:length"].get<uint64_t>() / 1000000.0; }
+        }
 
-    // Build slices
-    int current_width = 0;
-    int j = 0;
+        double percent = (len > 0.1) ? min((pos / len) * 100.0, 100.0) : 0.0;
+        int SCROLL_WIDTH = 30;
+        vector<string> chars = utf8ToChars(TEXT);
+        if (chars.empty()) return "";
+        if (g_scroll_index >= (int)chars.size()) g_scroll_index = 0;
 
+        vector<string> scroll_pool = chars;
+        scroll_pool.insert(scroll_pool.end(), chars.begin(), chars.end());
 
+        double mapped = (getStringWidth(chars) <= SCROLL_WIDTH) ? min(percent / 0.95, 100.0) : min(percent / 0.855, 100.0);
+        string LAST_BLOCK = (percent >= 95 && getStringWidth(chars) > SCROLL_WIDTH) ? "^c"+green2+"^^b"+green2+"^ " : " ";
+        
+        int prog_w = static_cast<int>((mapped / 100.0) * SCROLL_WIDTH);
+        string BEFORE, AFTER;
+        int cur_w = 0, j = 0;
+        while (cur_w < prog_w && j < (int)scroll_pool.size()) {
+            int cw = getCharWidth(scroll_pool[(g_scroll_index + j) % scroll_pool.size()]);
+            if (cur_w + cw <= prog_w) { BEFORE += scroll_pool[(g_scroll_index + j) % scroll_pool.size()]; cur_w += cw; j++; } else break;
+        }
+        while (cur_w < SCROLL_WIDTH && j < (int)scroll_pool.size()) {
+            int cw = getCharWidth(scroll_pool[(g_scroll_index + j) % scroll_pool.size()]);
+            if (cur_w + cw <= SCROLL_WIDTH) { AFTER += scroll_pool[(g_scroll_index + j) % scroll_pool.size()]; cur_w += cw; j++; } else break;
+        }
 
-    while (current_width < progress_width && j < (int)SCROLL_CHARS.size()) {
-        int char_width = getCharWidth(SCROLL_CHARS[(i + j) % SCROLL_CHARS.size()]);
-        if (current_width + char_width <= progress_width) {
-            SLICE_BEFORE += SCROLL_CHARS[(i + j) % SCROLL_CHARS.size()];
-            current_width += char_width;
-            j++;
-        } else break;
-    }
-
-    int start_j = j;
-    while (current_width < SCROLL_WIDTH && j < start_j + (int)SCROLL_CHARS.size()) {
-        int char_width = getCharWidth(SCROLL_CHARS[(i + j) % SCROLL_CHARS.size()]);
-        if (current_width + char_width <= SCROLL_WIDTH) {
-            SLICE_AFTER += SCROLL_CHARS[(i + j) % SCROLL_CHARS.size()];
-            current_width += char_width;
-            j++;
-        } else break;
-    }
-
-    // Build bar
-    string output =
-          "^c" + black + "^ ^b" + green2 + "^ 󰎆 "
-        + "^c" + black + "^" + SLICE_BEFORE
-        + "^b" + green3 + "^" + SLICE_AFTER + LAST_BLOCK
-        + "^d^" + "^c" + blue + "^";
-
-    // Scroll for next tick
-    i = (i + 1) % TEXT_LEN;
-
-    return output;
+        g_scroll_index = (g_scroll_index + 1) % chars.size();
+        return "^c"+black+"^ ^b"+green2+"^ 󰎆 ^c"+black+"^"+BEFORE+"^b"+green3+"^"+AFTER+LAST_BLOCK+"^d^^c"+blue+"^";
+    } catch (...) { return "^c"+black+"^ ^b"+green2+"^ 󰎆 Music "; }
 }
 
+// --- Main Logic ---
 
 string info_play() {
-    // Get memory info
-    string free_output     = getMemUsedStr();
-    string mem_unit        = getMemUnitStr();
-    string mem_percent_str = getMemPercentStr();
+    WifiStatus wifi = get_wifi_info();
+    string free_output = getMemUsedStr();
+    string mem_unit = getMemUnitStr();
+    int mem_percent = stoi(getMemPercentStr());
     
-    int mem_percent = mem_percent_str.empty() ? 0 : stoi(mem_percent_str);
-    
-    string icon, t_color;
-    if (mem_percent < 40) {
-        icon = "󰾆";
-        t_color = black;
-    } else if (mem_percent < 80) {
-        icon = "󰾅";
-        t_color = black;
-    } else {
-        icon = "󰓅";
-        t_color = red;
-    }
-    
-    // Get WiFi info
-    string interface = trim(exec("iw dev | awk '$1==\"Interface\"{print $2; exit}'"));
-    string strength_str = trim(exec(("iw dev " + interface + " link | awk '/signal/ {print int($2)}'").c_str()));
-    int strength = strength_str.empty() ? -100 : stoi(strength_str);
+    string icon = (mem_percent < 40) ? "󰾆" : (mem_percent < 80) ? "󰾅" : "󰓅";
+    string t_color = (mem_percent < 80) ? black : red;
     
     string wicon;
-    if (strength > -55) {
-        wicon = "󰤨";
-    } else if (strength > -85) {
-        wicon = "󰤥";
-    } else if (strength > -90) {
-        wicon = "󰤢";
-    } else if (strength < -90) {
-        wicon = "󰤟";
-    } else {
+    if (!wifi.is_up) {
         wicon = "󰤭";
+    } else {
+        if (wifi.strength > 75) wicon = "󰤨";
+        else if (wifi.strength > 50) wicon = "󰤥";
+        else if (wifi.strength > 25) wicon = "󰤢";
+        else wicon = "󰤟";
     }
+
+    string cap_s = read_file("/sys/class/power_supply/BAT0/capacity");
+    string chg_s = read_file("/sys/class/power_supply/AC0/online");
+    int capacity = cap_s.empty() ? 0 : stoi(cap_s);
+    int charging = chg_s.empty() ? 0 : stoi(chg_s);
+    string bicon = (charging == 1) ? "󰂄" : (capacity >= 90) ? "󰁹" : (capacity >= 50) ? "󰁿" : (capacity >= 20) ? "󰁼" : "󰁺";
     
-    string state = read_file("/sys/class/net/" + interface + "/operstate");
-    state = trim(state);
-    
-    // Check for playing media
     string player = get_playing_player();
     string result;
-    
-    if (!player.empty()) {
-        // Call player_info() inline instead of external script
-        string player_output = player_info(player);
-        
-        result = player_output + "^c" + t_color + "^ ^b" + blue + "^ " + icon + " ^d^";
-        if (state == "up") {
-            result += "^c" + black + "^ ^b" + blue + "^ " + wicon + " ^d^";
-        } else {
-            result += "^c" + black + "^ ^b" + blue + "^ 󰤭^d^";
-        }
-    } else {
-        // Write scroll position and show CPU
-        g_scroll_index = 0;
 
-        
-        string cpu_str = getCpuUsageString();        
-        result = "^c" + black + "^ ^b" + green + "^ ";
-        result += "^c" + white + "^ ^b" + grey + "^ " + cpu_str + "% ^d^";
-        result += "^c" + t_color + "^ ^b" + green + "^ " + icon;
-        result += "^c" + white + "^ ^b" + grey + "^ " + trim(free_output) + mem_unit + " ^d^";
-        
-        string get_wifi = trim(exec("iwgetid -r"));
-        if (state == "up") {
-            result += "^c" + black + "^ ^b" + blue + "^ " + wicon + "^c" + white + "^ ^b" + grey + "^ " + get_wifi + " ^d^";
-        } else {
-            result += "^c" + black + "^ ^b" + blue + "^ 󰤭^c" + white + "^ ^b" + grey + "^ Disconnected ^d^";
-        }
+    if (!player.empty()) {
+        result = player_info(player) + "^c" + t_color + "^ ^b" + blue + "^ " + icon + " ^d^";
+        result += "^c" + black + "^ ^b" + blue + "^ " + wicon + " ^d^" + clock_time() + kb_layout() + "^c" + blue + "^ " + bicon;
+    } else {
+        g_scroll_index = 0;
+        result = "^c" + blue + "^" + bicon + " " + to_string(capacity) + "%^c" + black + "^ ^b" + green + "^ ^c" + white + "^ ^b" + grey + "^ " + getCpuUsageString() + "% ^d^";
+        result += "^c" + t_color + "^ ^b" + green + "^ " + icon + "^c" + white + "^ ^b" + grey + "^ " + free_output + mem_unit + " ^d^";
+        result += "^c" + black + "^ ^b" + blue + "^ " + wicon + "^c" + white + "^ ^b" + grey + "^ " + (wifi.is_up ? wifi.ssid : "Disconnected") + " ^d^" + clock_time() + kb_layout();
     }
-    
     return result;
 }
 
 int main() {
-    int interval = 0;
-    
     while (true) {
-        if (interval == 0 || (interval % 3600) == 0) {
-            interval = interval + 1;
-        }
-        
-        usleep(700000);
-        
-        string bar_output = "   " + battery() + info_play() + clock_time() + kb_layout() + "^b" + black + "^ ";
-        string xsetroot_cmd = "xsetroot -name \"" + bar_output + "\"";
-        system(xsetroot_cmd.c_str());
+        string bar_output = "   " + info_play() + "^b" + black + "^ ";
+        string cmd = "xsetroot -name \"" + bar_output + "\"";
+        system(cmd.c_str());
+        usleep(700000); 
     }
-    
     return 0;
 }
