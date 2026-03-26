@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -e
+echo "This scripts is not fully runable and will return som error"
+echo "please run at you own RISK and always read what this scripts do with you machin"
+read -rp "Did you want to continue? (y/N): " ans
+
+case "$ans" in
+  y|Y)
+    echo "=> Be careful!"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+
+sudo pacman -Syu
+
+if ! command -v yay >/dev/null 2>&1; then
+    echo "yay not found, installing..."
+
+    sudo pacman -S --needed --noconfirm git base-devel
+
+    tmpdir=$(mktemp -d)
+    git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
+    (cd "$tmpdir/yay" && makepkg -si --noconfirm)
+
+    sudo rm -rf "$tmpdir"
+else
+    echo "yay already installed, skipping"
+fi
+
+echo "==> Installing required packages..."
+sudo pacman -S --needed --noconfirm \
+    imlib2 dash kitty starship exa \
+    kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
+    base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
+    libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
+    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw \
+    fish git nano fastfetch less dex playerctl
+
+yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
+
+echo "==> Installing cursor..."
+yay -S --noconfirm --needed bibata-cursor-theme-bin
+
+echo "==> Installing greenclip..."
+yay -S --noconfirm --needed rofi-greenclip
+
+sudo cp -r AnDWM "$HOME"/.config/
+
+echo "==> Installing fonts..."
+sudo pacman -S --noconfirm --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
+yay -S --noconfirm --needed ttf-iosevka
+mkdir -p ~/.local/share/fonts/
+cd ~/.local/share/fonts/
+sudo wget https://github.com/be5invis/Sarasa-Gothic/releases/download/v1.0.35/Sarasa-SuperTTC-1.0.35.7z
+sudo 7z x Sarasa-SuperTTC-1.0.35.7z
+rm Sarasa-SuperTTC-1.0.35.7z
+fc-cache -fv
+
+# -------------------------
+# ASK BEFORE ENABLING LY
+# -------------------------
+read -rp "Do you want to install Ly and disable other display manager? (y/n): " ans
+if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+    cd "$HOME"/.config/AnDWM/
+    sudo git clone https://github.com/fairyglade/ly.git
+    cd ly
+    sudo zig build installexe -Dinit_system=systemd
+    cd ..
+
+    echo "=> Disabling other display managers..."
+    sudo systemctl disable sddm.service || true
+    sudo systemctl disable lightdm.service || true
+    sudo systemctl disable gdm.service || true
+    sudo systemctl disable lxdm.service || true
+    
+
+    echo "=> Enabling LY..."
+    sudo systemctl enable ly@tty2.service
+else
+    echo "=> Skipping LY install step."
+fi
+
+echo "==> Copying dotfiles..."
+cd "$HOME/AnDWM/"
+
+sudo cp -r .config "$HOME"
+
+sudo chmod -R a+rwX ~/.config
+sudo chown -R $USER:$USER ~/.config
+
+sudo cp -r .icons "$HOME"
+
+sudo chmod -R a+rwX ~/.icons
+sudo chown -R $USER:$USER ~/.icons
+
+sudo cp -r usr/share/* /usr/share
+sudo cp .Xresources "$HOME"
+
+echo "==> Building QOL Packages..."
+
+cd "$HOME/.config/AnDWM/scripts/"
+sudo g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
+sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
+sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
+
+echo "==> Building and installing AnDWM..."
+cd "$HOME/.config/AnDWM/AnDWM/"
+sudo make install
+
+echo "==> Creating XSession entry..."
+DESKTOP_FILE="/usr/share/xsessions/AnDWM.desktop"
+
+sudo mkdir -p /usr/share/xsessions/
+sudo bash -c "cat > $DESKTOP_FILE" <<'EOF'
+[Desktop Entry]
+Name=AnDWM
+Comment=fork of chadwm makt it modern
+Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
+Type=Application
+EOF
+
+echo "==> Installation complete!"
+echo "Reboot and select 'AnDWM' on login."
+echo "Thank you for chadwm"
