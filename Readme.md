@@ -9,7 +9,9 @@
 
 https://github.com/user-attachments/assets/d47fd978-35b7-4f38-9909-73d7a0f3478c
 
-
+### Todo list :-
+* add more automation compile in MAKEFILE
+* recompose readme.md file
 
 ## Requirements
 
