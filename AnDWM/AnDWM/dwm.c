@@ -2133,43 +2133,51 @@ static const char *getclientclass(Client *c) {
 
 int picom_state = 0;
 const char *class_name; // Renamed to avoid confusion with C++ 'class' keyword
+static Display *cached_dpy = NULL;
+static Window cached_win = 0;
+static int cached_valid = 0;
 
 void togglepicom(const Arg *arg) {
-  Client *c = selmon->sel;
-  if (!c)
-    return;
+    Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+    if (opacity == None)
+        return;
 
-  // Display *dpy = dpy; // dwm already has 'dpy' as the Display*
-  Window win = c->win; // the X11 window of the client
+    if (picom_state == 0) {
+        Client *c = selmon->sel;
+        if (!c || !c->win)
+            return;
 
-  Atom myAtom = XInternAtom(dpy, "_STICK_PROP", False);
-  const char *value = "on";
+        // Cache values
+        cached_dpy = dpy;
+        cached_win = c->win;
+        cached_valid = 1;
 
-  char cmd[512]; // Increased buffer for safety
+        unsigned long value = 0xffffffff; // fully opaque
 
-  // Use == for comparison!
-  if (picom_state == 0) {
-    XChangeProperty(dpy, win, myAtom, XA_STRING, 8, PropModeReplace,
-                    (unsigned char *)value, strlen(value));
-    // Use $HOME instead of ~ for better reliability in system()
-    class_name = getclientclass(c);
-    if (class_name && strcmp(class_name, "mpv") == 0) {
-      snprintf(cmd, sizeof(cmd), "$HOME/.config/AnDWM/scripts/sh/dynblur.sh %s",
-               class_name);
-      system(cmd);
+        XChangeProperty(cached_dpy, cached_win, opacity, XA_CARDINAL, 32,
+                        PropModeReplace, (unsigned char *)&value, 1);
+
+        picom_state = 1;
+
+    } else {
+        if (!cached_valid)
+            return;
+        
+            XWindowAttributes wa;
+        if (!XGetWindowAttributes(cached_dpy, cached_win, &wa)) {
+            cached_valid = 0;
+            return;
+        }
+
+        XDeleteProperty(cached_dpy, cached_win, opacity);
+
+        // Reset cache (important!)
+        cached_valid = 0;
+        cached_win = 0;
+        cached_dpy = NULL;
+
+        picom_state = 0;
     }
-
-    picom_state = 1;
-  } else {
-    XDeleteProperty(dpy, win, myAtom);
-    picom_state = 0;
-    if (class_name && strcmp(class_name, "mpv") == 0) {
-      snprintf(cmd, sizeof(cmd), "$HOME/.config/AnDWM/scripts/sh/dynblur.sh %s",
-               class_name);
-      system(cmd);
-    }
-  }
-  XSync(dpy, False);
 }
 
 unsigned int stick_state;
@@ -2185,10 +2193,10 @@ void togglesticky(const Arg *arg) {
     return;
 
   if (!stickywin) {
+
     /* MAKE STICKY */
     stickywin = c;
     c->issticky = 1;
-
     // Save state
     c->oldtags = c->tags;
     c->tags = TAGMASK; // Visible on all tags
@@ -2214,6 +2222,7 @@ void togglesticky(const Arg *arg) {
     XLowerWindow(dpy, c->win);
   } else {
     /* UNSTICK */
+
     c->issticky = 0;
     c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
 
