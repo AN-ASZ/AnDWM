@@ -18,6 +18,10 @@
 #include <iomanip>
 #include <map>
 #include <sdbus-c++/sdbus-c++.h>
+//Dim manager (foe some media app that dont prevent dimming, zen, etc..)
+#include <X11/Xlib.h>
+#include <X11/extensions/scrnsaver.h>
+#include <X11/extensions/dpms.h>
 
 using namespace std;
 
@@ -34,7 +38,12 @@ string green2="#a6da95";
 string teal2="#5BA643";
 string green3="#B8E9B4";
 
+// Variable for media scroll in bar
 int g_scroll_index = 0;
+
+// Variable for store dimming data
+static Display* dpy = nullptr;
+bool DimMode=0;
 
 // --- DBus Connections ---
 sdbus::IConnection& getBus() {
@@ -48,6 +57,20 @@ sdbus::IConnection& getSystemBus() {
 }
 
 // --- Utility Functions ---
+
+Display* getDisplay() {
+    static Display* d = nullptr;
+
+    if (!d) {
+        d = XOpenDisplay(nullptr);
+        if (!d) {
+            fprintf(stderr, "Cannot open display\n");
+            exit(1);
+        }
+    }
+
+    return d;
+}
 
 string trim(const string& str) {
     size_t first = str.find_first_not_of(" \t\n\r");
@@ -88,6 +111,25 @@ string escape_quotes(string s) {
         else res += c;
     }
     return res;
+}
+
+void setAutoDimTimeout(Display* dpy, int timeout) {
+    if (!dpy) return;
+
+    int current_timeout, interval, prefer_blanking, allow_exposures;
+
+    // Get current settings
+    XGetScreenSaver(dpy, &current_timeout, &interval,
+                    &prefer_blanking, &allow_exposures);
+
+    // Set new timeout
+    XSetScreenSaver(dpy,
+                    timeout,        // idle timeout before dim
+                    interval,
+                    prefer_blanking,
+                    allow_exposures);
+
+    XFlush(dpy);
 }
 
 // --- NetworkManager DBus Logic ---
@@ -352,10 +394,12 @@ string player_info(const string& app) {
         string BEFORE, AFTER;
         int cur_w = 0, j = 0;
         while (cur_w < prog_w && j < (int)scroll_pool.size()) {
+            
             int cw = getCharWidth(scroll_pool[(g_scroll_index + j) % scroll_pool.size()]);
             if (cur_w + cw <= prog_w) { BEFORE += scroll_pool[(g_scroll_index + j) % scroll_pool.size()]; cur_w += cw; j++; } else break;
         }
         while (cur_w < SCROLL_WIDTH && j < (int)scroll_pool.size()) {
+            
             int cw = getCharWidth(scroll_pool[(g_scroll_index + j) % scroll_pool.size()]);
             if (cur_w + cw <= SCROLL_WIDTH) { AFTER += scroll_pool[(g_scroll_index + j) % scroll_pool.size()]; cur_w += cw; j++; } else break;
         }
@@ -398,11 +442,19 @@ string info_play() {
     if (!player.empty()) {
         result = player_info(player) + "^c" + t_color + "^ ^b" + blue + "^ " + icon + " ^d^";
         result += "^c" + black + "^ ^b" + blue + "^ " + wicon + " ^d^" + clock_time() + kb_layout() + "^c" + blue + "^ " + bicon;
+        if (DimMode==0){
+            setAutoDimTimeout(dpy, 0);
+            DimMode=0;
+        }
     } else {
         g_scroll_index = 0;
         result = "^c" + blue + "^" + bicon + " " + to_string(capacity) + "%^c" + black + "^ ^b" + green + "^ ^c" + white + "^ ^b" + grey + "^ " + getCpuUsageString() + "% ^d^";
         result += "^c" + t_color + "^ ^b" + green + "^ " + icon + "^c" + white + "^ ^b" + grey + "^ " + free_output + mem_unit + " ^d^";
         result += "^c" + black + "^ ^b" + blue + "^ " + wicon + "^c" + white + "^ ^b" + grey + "^ " + (wifi.is_up ? wifi.ssid : "Disconnected") + " ^d^" + clock_time() + kb_layout();
+        if (DimMode==1){
+            setAutoDimTimeout(dpy, 600);
+            DimMode=1;
+        }
     }
     return result;
 }
