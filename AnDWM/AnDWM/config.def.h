@@ -173,7 +173,7 @@ static const Key keys[] = {
     { MODKEY|ControlMask,               XK_t,       togglegaps,     {0} },
     { MODKEY,                           XK_w,       togglefloating, {0} },
     { MODKEY,                           XK_f,       togglefullscr,  {0} },
-    { MODKEY|ShiftMask,                 XK_b,       togglesticky,   {0} },
+    { MODKEY|ShiftMask,                 XK_b,       togglestickyclient,   {0} },
 
     { MODKEY|ShiftMask,                 XK_w,       tabmode,        { -1 } },
     { MODKEY,                           XK_j,       focusstack,     {.i = +1 } },

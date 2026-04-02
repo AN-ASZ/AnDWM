@@ -72,6 +72,21 @@ Display* getDisplay() {
     return d;
 }
 
+bool read_fullscreen() {
+    std::ifstream f("/tmp/isfullscreen");
+
+    if (!f.is_open()) {
+        return false;
+    }
+
+    int value = 0;
+    if (!(f >> value)) {
+        return false;
+    }
+
+    return value != 0;
+}
+
 string trim(const string& str) {
     size_t first = str.find_first_not_of(" \t\n\r");
     if (first == string::npos) return "";
@@ -461,10 +476,17 @@ string info_play() {
 
 int main() {
     while (true) {
-        string bar_output = "   " + info_play() + "^b" + black + "^ ";
-        string cmd = "xsetroot -name \"" + bar_output + "\"";
-        system(cmd.c_str());
-        usleep(700000); 
+        if (!read_fullscreen()){
+            string bar_output = "   " + info_play() + "^b" + black + "^ ";
+            string cmd = "xsetroot -name \"" + bar_output + "\"";
+            system(cmd.c_str());
+            usleep(700000); 
+        }else{
+            usleep(5000000); 
+        }
+        
+
+        
     }
     return 0;
 }
