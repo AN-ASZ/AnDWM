@@ -38,6 +38,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
@@ -528,9 +529,9 @@ int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact) {
   Monitor *m = c->mon;
 
   if (c->issticky) {
-        *w = MAX(1, *w);
-        *h = MAX(1, *h);
-        return 1; 
+    *w = MAX(1, *w);
+    *h = MAX(1, *h);
+    return 1;
   }
 
   /* set minimum possible */
@@ -1536,9 +1537,9 @@ void drawbar(Monitor *m) {
 
   resizebarwin(m);
   for (c = m->clients; c; c = c->next) {
-    occ |= c->tags;
+    occ |= (c->issticky ? c->oldtags : c->tags);
     if (c->isurgent)
-      urg |= c->tags;
+      urg |= (c->issticky ? c->oldtags : c->tags);
   }
 
   drw_setscheme(drw, scheme[SchemeNorm]);
@@ -1828,11 +1829,12 @@ void expose(XEvent *e) {
 }
 
 void write_fullscreen(int value) {
-    FILE *f = fopen("/tmp/isfullscreen", "w");
-    if (!f) return;
+  FILE *f = fopen("/tmp/isfullscreen", "w");
+  if (!f)
+    return;
 
-    fprintf(f, "%d", value);  // write 0 or 1
-    fclose(f);
+  fprintf(f, "%d", value); // write 0 or 1
+  fclose(f);
 }
 
 void focus(Client *c) {
@@ -2151,46 +2153,46 @@ static Window cached_win = 0;
 static int cached_valid = 0;
 
 void togglepicom(const Arg *arg) {
-    Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
-    if (opacity == None)
-        return;
+  Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  if (opacity == None)
+    return;
 
-    if (picom_state == 0) {
-        Client *c = selmon->sel;
-        if (!c || !c->win)
-            return;
+  if (picom_state == 0) {
+    Client *c = selmon->sel;
+    if (!c || !c->win)
+      return;
 
-        // Cache values
-        cached_dpy = dpy;
-        cached_win = c->win;
-        cached_valid = 1;
+    // Cache values
+    cached_dpy = dpy;
+    cached_win = c->win;
+    cached_valid = 1;
 
-        unsigned long value = 0xffffffff; // fully opaque
+    unsigned long value = 0xffffffff; // fully opaque
 
-        XChangeProperty(cached_dpy, cached_win, opacity, XA_CARDINAL, 32,
-                        PropModeReplace, (unsigned char *)&value, 1);
+    XChangeProperty(cached_dpy, cached_win, opacity, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&value, 1);
 
-        picom_state = 1;
+    picom_state = 1;
 
-    } else {
-        if (!cached_valid)
-            return;
-        
-            XWindowAttributes wa;
-        if (!XGetWindowAttributes(cached_dpy, cached_win, &wa)) {
-            cached_valid = 0;
-            return;
-        }
+  } else {
+    if (!cached_valid)
+      return;
 
-        XDeleteProperty(cached_dpy, cached_win, opacity);
-
-        // Reset cache (important!)
-        cached_valid = 0;
-        cached_win = 0;
-        cached_dpy = NULL;
-
-        picom_state = 0;
+    XWindowAttributes wa;
+    if (!XGetWindowAttributes(cached_dpy, cached_win, &wa)) {
+      cached_valid = 0;
+      return;
     }
+
+    XDeleteProperty(cached_dpy, cached_win, opacity);
+
+    // Reset cache (important!)
+    cached_valid = 0;
+    cached_win = 0;
+    cached_dpy = NULL;
+
+    picom_state = 0;
+  }
 }
 
 // Example of fullscreen function
@@ -2205,131 +2207,130 @@ void togglefullscr(const Arg *arg) {
 //    void togglesticky(const Arg *arg){
 //      if (!selmon || (!selmon->sel && !stickywin))
 //        return;
-//    
+//
 //      if (!c)
 //        return;
-//    
+//
 //      if (c->isfullscreen)
 //        return;
-//    
+//
 //      if (!stickywin){
 //        stickywin = c;
 //        // Save state
 //        stickywin->oldtags = c->tags;
 //        // Visible on all tags
 //        stickywin->tags = TAGMASK;
-//        // Keep sticky windows tiled/managed, no fullscreen toggle on error path
-//        setfullscreen(stickywin, 0);
-//        stickywin->issticky = 1;
+//        // Keep sticky windows tiled/managed, no fullscreen toggle on error
+//        path setfullscreen(stickywin, 0); stickywin->issticky = 1;
 //        stick_state=1;
-//    
+//
 //        // Move sticky window to bottom of stack so it does not cover others
 //        detachstack(stickywin);
 //        attachstack(stickywin);
 //        XLowerWindow(dpy, stickywin->win);
 //      } else {
-//        stickywin->tags = stickywin->oldtags ? stickywin->oldtags : selmon->tagset[selmon->seltags];
-//        setfullscreen(stickywin, 0);
+//        stickywin->tags = stickywin->oldtags ? stickywin->oldtags :
+//        selmon->tagset[selmon->seltags]; setfullscreen(stickywin, 0);
 //        stickywin->issticky = 0;
 //        stick_state=0;
-//    
+//
 //        stickywin = NULL; /* assignment, not comparison */
 //        arrange(selmon);
 //      }
 //    }
-//Global enviroment to store client name
+// Global enviroment to store client name
 static Client *stickywin = NULL;
 unsigned stick_state;
-void
-togglesticky(Client *c, int fullscreen)
-{
-    if (!c || c->isfullscreen)
-        return;
+void togglesticky(Client *c, int fullscreen) {
+  if (!c || c->isfullscreen)
+    return;
 
-    /* 1. If a DIFFERENT window is already sticky, unstick it first */
-    if (stickywin && stickywin != c) {
-        stickywin->isfloating = stickywin->wasfloating;
-        stickywin->tags = stickywin->oldtags;
-        stickywin->issticky = 0;
+  /* 1. If a DIFFERENT window is already sticky, unstick it first */
+  if (stickywin && stickywin != c) {
+    stickywin->isfloating = stickywin->wasfloating;
+    stickywin->tags = stickywin->oldtags;
+    stickywin->issticky = 0;
 
-        /* Restore original geometry */
-        resizeclient(stickywin, stickywin->prevx, stickywin->prevy,
-                     stickywin->prevw, stickywin->prevh);
+    /* Restore original geometry */
+    resizeclient(stickywin, stickywin->prevx, stickywin->prevy,
+                 stickywin->prevw, stickywin->prevh);
 
-        /* Remove EWMH Fullscreen state */
-        XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
-                        PropModeReplace, (unsigned char *)0, 0);
+    /* Remove EWMH Fullscreen state */
+    XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)0, 0);
 
-        detachstack(stickywin);
-        attachstack(stickywin);
-        XRaiseWindow(dpy, stickywin->win);
-        
-        stickywin = NULL; 
-        /* After unsticking the old one, we continue below to stick the new one */
-    }
+    detachstack(stickywin);
+    attachstack(stickywin);
+    XRaiseWindow(dpy, stickywin->win);
 
-    /* 2. Toggle the current window 'c' */
-    if (!stickywin) {
-        /* Make it Sticky */
-        stickywin = c;
-        stickywin->issticky = 1;
-        stickywin->wasfloating = stickywin->isfloating;
+    stickywin = NULL;
+    /* After unsticking the old one, we continue below to stick the new one */
+  }
 
-        /* Save state */
-        stickywin->oldtags = stickywin->tags;
-        stickywin->prevx = stickywin->x;
-        stickywin->prevy = stickywin->y;
-        stickywin->prevw = stickywin->w;
-        stickywin->prevh = stickywin->h;
-        
-        stickywin->isfloating = 1;
-        stickywin->tags = TAGMASK;
+  /* 2. Toggle the current window 'c' */
+  if (!stickywin) {
+    /* Make it Sticky */
+    stickywin = c;
+    stickywin->issticky = 1;
+    stickywin->wasfloating = stickywin->isfloating;
 
-        /* Set EWMH state to Fullscreen so other windows don't overlap it easily */
-        XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
-                        PropModeReplace, (unsigned char *)&netatom[NetWMFullscreen], 1);
+    /* Save state */
+    stickywin->oldtags = stickywin->tags;
+    stickywin->prevx = stickywin->x;
+    stickywin->prevy = stickywin->y;
+    stickywin->prevw = stickywin->w;
+    stickywin->prevh = stickywin->h;
 
-        /* Resize to fill the monitor */
-        resizeclient(stickywin, stickywin->mon->mx-1, stickywin->mon->my-1, 
-                     stickywin->mon->mw, stickywin->mon->mh);
+    stickywin->isfloating = 1;
+    stickywin->tags = TAGMASK;
 
-        detachstack(stickywin);
-        attachstack(stickywin);
-        XLowerWindow(dpy, stickywin->win);
-    } else {
-        /* 1. Reset EWMH first */
-        XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
-                        PropModeReplace, (unsigned char *)0, 0);
+    /* Set EWMH state to Fullscreen so other windows don't overlap it easily */
+    XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)&netatom[NetWMFullscreen],
+                    1);
 
-        /* 2. Restore the floating status */
-        stickywin->isfloating = stickywin->wasfloating;
-        stickywin->tags = stickywin->oldtags;
-        stickywin->issticky = 0;
-        stickywin->isfullscreen = 0;
+    /* Resize to fill the monitor */
+    resizeclient(stickywin, stickywin->mon->mx - 1, stickywin->mon->my - 1,
+                 stickywin->mon->mw, stickywin->mon->mh);
 
-        /* 3. Explicitly move the client's variables back to old state */
-        stickywin->x = stickywin->prevx;
-        stickywin->y = stickywin->prevy;
-        stickywin->w = stickywin->prevw;
-        stickywin->h = stickywin->prevh;
+    detachstack(stickywin);
+    attachstack(stickywin);
+    XLowerWindow(dpy, stickywin->win);
+  } else {
+    /* 1. Reset EWMH first */
+    XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)0, 0);
 
-        /* 4. Now call resize to tell X11 where to put it */
-        resizeclient(stickywin, stickywin->x, stickywin->y, stickywin->w, stickywin->h);
+    /* 2. Restore the floating status */
+    stickywin->isfloating = stickywin->wasfloating;
+    stickywin->tags = stickywin->oldtags;
+    stickywin->issticky = 0;
+    stickywin->isfullscreen = 0;
 
-        detachstack(stickywin);
-        attachstack(stickywin);
-        XRaiseWindow(dpy, stickywin->win);
-        
-        stickywin = NULL;
-      }
+    /* 3. Explicitly move the client's variables back to old state */
+    stickywin->x = stickywin->prevx;
+    stickywin->y = stickywin->prevy;
+    stickywin->w = stickywin->prevw;
+    stickywin->h = stickywin->prevh;
 
-    /* Finalize layout */
-    focus(NULL);
-    if (c->mon)
-        arrange(c->mon);
+    /* 4. Now call resize to tell X11 where to put it */
+    resizeclient(stickywin, stickywin->x, stickywin->y, stickywin->w,
+                 stickywin->h);
+
+    detachstack(stickywin);
+    attachstack(stickywin);
+    XRaiseWindow(dpy, stickywin->win);
+
+    stickywin = NULL;
+  }
+
+  /* Finalize layout */
+  focus(NULL);
+  if (c->mon)
+    arrange(c->mon);
 }
 
-void togglestickyclient(const Arg *arg){
+void togglestickyclient(const Arg *arg) {
   /* if sticky window exists, always just toggle it off */
   if (stickywin) {
     togglesticky(stickywin, stickywin->isfullscreen);
@@ -2344,22 +2345,20 @@ void togglestickyclient(const Arg *arg){
   togglesticky(c, c->isfullscreen);
 }
 
-
-
 // Old functions
 //    void togglesticky(const Arg *arg) {
 //      // 1. Safety check: ensure we have a monitor and a client to act on
 //      if (!selmon || (!selmon->sel && !stickywin))
 //        return;
-//    
+//
 //      Client *c = stickywin ? stickywin : selmon->sel;
-//    
+//
 //      // Don't mess with fullscren windows
 //      if (c->isfullscreen)
 //        return;
-//    
+//
 //      if (!stickywin) {
-//    
+//
 //        /* MAKE STICKY */
 //        stickywin = c;
 //        c->issticky = 1;
@@ -2367,39 +2366,39 @@ void togglestickyclient(const Arg *arg){
 //        c->oldtags = c->tags;
 //        c->tags = TAGMASK; // Visible on all tags
 //        togglepicom(NULL);
-//    
+//
 //        c->wasfloating = c->isfloating;
 //        c->prevx = c->x;
 //        c->prevy = c->y;
 //        c->prevw = c->w;
 //        c->prevh = c->h;
-//    
+//
 //        c->isfloating = 1;
-//    
+//
 //        // Use monitor dimensions (m->mw/mh) instead of DisplayWidth
 //        // This prevents the window from bleeding into other monitors
 //        setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
-//    
+//
 //        // Move to bottom of stack so it doesn't cover new windows
 //        detachstack(c);
 //        attachstack(c); // Or a custom attachbottom(c) if you have one
-//    
+//
 //        XLowerWindow(dpy, c->win);
 //      } else {
 //        /* UNSTICK */
-//    
+//
 //        c->issticky = 0;
 //        c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
-//    
+//
 //        c->isfloating = c->wasfloating;
 //        togglepicom(NULL);
 //        if (c->isfloating) {
 //          resizeclient(c, c->prevx, c->prevy, c->prevw, c->prevh);
 //        }
-//    
+//
 //        stickywin = NULL;
 //      }
-//    
+//
 //      focus(NULL);
 //      arrange(selmon);
 //    }
@@ -2452,7 +2451,6 @@ void manage(Window w, XWindowAttributes *wa) {
 
   updateicon(c);
   updatetitle(c);
-
 
   if (XGetTransientForHint(dpy, w, &trans) && (t = wintoclient(trans))) {
     c->mon = t->mon;
@@ -2525,14 +2523,14 @@ void manage(Window w, XWindowAttributes *wa) {
   arrange(c->mon);
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
-  
+
   updatetitle(c);
-  if (c->name && strstr(c->name, "Picture in picture") || c->name && strstr(c->name, "Picture-in-Picture")) {
-        togglesticky(selmon->sel, !selmon->sel->isfullscreen);
+  if (c->name && strstr(c->name, "Picture in picture") ||
+      c->name && strstr(c->name, "Picture-in-Picture")) {
+    togglesticky(selmon->sel, !selmon->sel->isfullscreen);
   }
 
   focus(NULL);
-
 }
 
 void mappingnotify(XEvent *e) {
@@ -3151,9 +3149,9 @@ void restack(Monitor *m) {
   drawbar(m);
   drawtab(m);
   if (!m || !m->sel)
-        return;
+    return;
   if (m->sel && m->sel->issticky) {
-        XLowerWindow(dpy, m->sel->win);
+    XLowerWindow(dpy, m->sel->win);
   }
   if (!m->sel)
     return;
@@ -3279,6 +3277,249 @@ void setnumdesktops(void) {
                   PropModeReplace, (unsigned char *)data, 1);
 }
 
+/*
+ * cgwrite_focused — GPU VRAM boost for focused window via cgroup
+ * Mirrors dwm-dmemcg-boost.sh logic: reads /proc/PID/cgroup, enables
+ * subtree_control recursively, and writes to dmem.low
+ */
+#define CGROUP_PATH_MAX 512
+
+void cgwrite_log_error(const char *fmt, ...) {
+  va_list ap;
+  char msg[1024];
+  const char *logpath = "/home/hi/dwm-cgwrite-errors.log";
+  FILE *f;
+  time_t t = time(NULL);
+  struct tm tm;
+  char timestr[64];
+
+  if (!fmt)
+    return;
+
+  va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+
+  if (t != (time_t)-1 && localtime_r(&t, &tm)) {
+    if (!strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", &tm))
+      timestr[0] = '\0';
+  } else {
+    timestr[0] = '\0';
+  }
+
+  f = fopen(logpath, "a");
+  if (!f)
+    return;
+
+  if (timestr[0])
+    fprintf(f, "%s %s\n", timestr, msg);
+  else
+    fprintf(f, "%s\n", msg);
+
+  fclose(f);
+}
+
+pid_t getwindowpid(Window win) {
+  Atom atom, type;
+  int format;
+  unsigned long nitems, bytes;
+  unsigned char *prop;
+  pid_t pid = -1;
+
+  atom = XInternAtom(dpy, "_NET_WM_PID", False);
+  if (atom == None)
+    return -1;
+
+  if (XGetWindowProperty(dpy, win, atom, 0L, 1L, False, XA_CARDINAL, &type,
+                         &format, &nitems, &bytes, &prop) == Success &&
+      prop != NULL) {
+    pid = *(pid_t *)prop;
+    XFree(prop);
+  }
+  return pid;
+}
+
+/* Get cgroup relative path from /proc/PID/cgroup */
+int get_cgroup_path(pid_t pid, char *buf, size_t bufsize) {
+  char cgroup_file[64];
+  FILE *f;
+  char line[512];
+
+  if (pid <= 0 || !buf || bufsize == 0)
+    return 0;
+
+  snprintf(cgroup_file, sizeof(cgroup_file), "/proc/%d/cgroup", pid);
+  f = fopen(cgroup_file, "r");
+  if (!f) {
+    cgwrite_log_error("get_cgroup_path: cannot open %s: %s", cgroup_file,
+                      strerror(errno));
+    return 0;
+  }
+
+  /* Read first line, extract relative path (third field after colon) */
+  if (fgets(line, sizeof(line), f)) {
+    char *rel_path = strchr(line, ':');
+    if (rel_path) {
+      rel_path = strchr(rel_path + 1, ':');
+      if (rel_path) {
+        rel_path++; /* skip colon */
+        /* remove newline */
+        char *nl = strchr(rel_path, '\n');
+        if (nl)
+          *nl = '\0';
+        snprintf(buf, bufsize, "/sys/fs/cgroup%s", rel_path);
+        fclose(f);
+        return 1;
+      }
+    }
+  }
+  cgwrite_log_error("get_cgroup_path: malformed /proc/%d/cgroup", pid);
+  fclose(f);
+  return 0;
+}
+
+/* Write to cgroup file via helper or directly if permitted */
+void write_cgroup_file(const char *path, const char *value) {
+  FILE *f;
+  const char *helper = "/usr/lib/dwm-dmemcg-boost/cgwrite";
+
+  if (!path || !value)
+    return;
+
+  /* Try direct write first */
+  f = fopen(path, "w");
+  if (f) {
+    if (fputs(value, f) == EOF) {
+      cgwrite_log_error("direct cgroup write failed for %s: %s", path,
+                        strerror(errno));
+    }
+    fclose(f);
+  } else {
+    /* If direct write fails, attempt via setuid helper */
+    char cmd[768];
+    int status;
+    snprintf(cmd, sizeof(cmd), "echo '%s' | %s '%s' 2>/dev/null", value, helper,
+             path);
+    status = system(cmd);
+    if (status != 0)
+      cgwrite_log_error("helper cgroup write failed for %s (status %d)", path,
+                        status);
+  }
+}
+
+/* Enable dmem in subtree_control recursively up to root */
+void enable_dmem_subtree(const char *cgroup_path) {
+  char path[CGROUP_PATH_MAX];
+  char parent[CGROUP_PATH_MAX];
+  char subtree_file[CGROUP_PATH_MAX];
+  FILE *f;
+
+  if (!cgroup_path || strlen(cgroup_path) < strlen("/sys/fs/cgroup"))
+    return;
+
+  strncpy(path, cgroup_path, sizeof(path) - 1);
+  path[sizeof(path) - 1] = '\0';
+
+  while (strcmp(path, "/sys/fs/cgroup") != 0) {
+    snprintf(subtree_file, sizeof(subtree_file), "%s/cgroup.subtree_control",
+             path);
+
+    /* Check if dmem already enabled */
+    f = fopen(subtree_file, "r");
+    if (f) {
+      char buf[256];
+      int found = 0;
+      while (fgets(buf, sizeof(buf), f)) {
+        if (strstr(buf, "dmem")) {
+          found = 1;
+          break;
+        }
+      }
+      fclose(f);
+      if (found) {
+        /* Get parent directory */
+        char *last_slash = strrchr(path, '/');
+        if (last_slash && last_slash != path) {
+          *last_slash = '\0';
+        } else {
+          break;
+        }
+        continue;
+      }
+    }
+
+    /* Enable dmem */
+    write_cgroup_file(subtree_file, "+dmem\n");
+
+    /* Move to parent */
+    char *last_slash = strrchr(path, '/');
+    if (last_slash && last_slash != path) {
+      *last_slash = '\0';
+    } else {
+      break;
+    }
+  }
+}
+
+void cgwrite_focused(Window win) {
+  pid_t pid;
+  char cgroup_full[CGROUP_PATH_MAX];
+  char dmem_low_path[CGROUP_PATH_MAX];
+  char boost_value[128];
+  const char *drm_resource = "0"; /* Default GPU resource */
+  const char *boost_size = "4294967296"; /* 4G in bytes */
+
+  if (!win || win == None)
+    return;
+
+  pid = getwindowpid(win);
+  if (pid <= 0) {
+    cgwrite_log_error("cgwrite_focused: no PID for window 0x%lx", win);
+    return;
+  }
+
+  /* Verify process exists */
+  if (kill(pid, 0) != 0) {
+    cgwrite_log_error("cgwrite_focused: process %d not running for window 0x%lx",
+                      pid, win);
+    return;
+  }
+
+  /* Get cgroup path from /proc/PID/cgroup */
+  if (!get_cgroup_path(pid, cgroup_full, sizeof(cgroup_full))) {
+    cgwrite_log_error("cgwrite_focused: cannot resolve cgroup for pid %d", pid);
+    return;
+  }
+
+  /* Validate path is under /sys/fs/cgroup */
+  if (strncmp(cgroup_full, "/sys/fs/cgroup", strlen("/sys/fs/cgroup")) != 0) {
+    cgwrite_log_error("cgwrite_focused: cgroup path outside root: %s", cgroup_full);
+    return;
+  }
+
+  /* Reject path traversal */
+    if (strstr(cgroup_full, "..") != NULL) {
+    cgwrite_log_error("cgwrite_focused: invalid cgroup path traversal: %s", cgroup_full);
+    return;
+  }
+
+  /* Verify cgroup directory exists */
+  if (access(cgroup_full, F_OK) != 0) {
+    cgwrite_log_error("cgwrite_focused: cgroup path does not exist: %s", cgroup_full);
+    return;
+  }
+
+  /* Enable dmem in subtree controls recursively */
+  enable_dmem_subtree(cgroup_full);
+
+  /* Write boost to dmem.low */
+  snprintf(dmem_low_path, sizeof(dmem_low_path), "%s/dmem.low", cgroup_full);
+  snprintf(boost_value, sizeof(boost_value), "%s %s\n", drm_resource,
+           boost_size);
+
+  write_cgroup_file(dmem_low_path, boost_value);
+}
+
 void setfocus(Client *c) {
   if (!c->neverfocus) {
     XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
@@ -3287,6 +3528,9 @@ void setfocus(Client *c) {
   }
   sendevent(c->win, wmatom[WMTakeFocus], NoEventMask, wmatom[WMTakeFocus],
             CurrentTime, 0, 0, 0);
+  
+  /* Apply cgroup settings to focused window */
+  cgwrite_focused(c->win);
 }
 
 void setfullscreen(Client *c, int fullscreen) {
