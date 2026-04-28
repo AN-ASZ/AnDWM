@@ -3287,11 +3287,18 @@ void setnumdesktops(void) {
 void cgwrite_log_error(const char *fmt, ...) {
   va_list ap;
   char msg[1024];
-  const char *logpath = "/home/hi/dwm-cgwrite-errors.log";
+  char logpath[CGROUP_PATH_MAX];
+  const char *user = getenv("USER");
   FILE *f;
   time_t t = time(NULL);
   struct tm tm;
   char timestr[64];
+
+  if (user) {
+    snprintf(logpath, sizeof(logpath), "/home/%s/dwm-cgwrite-errors.log", user);
+  } else {
+    strcpy(logpath, "/tmp/dwm-cgwrite-errors.log");
+  }
 
   if (!fmt)
     return;
