@@ -103,6 +103,7 @@ static const Rule rules[] = {
     { "Gimp",     NULL,       NULL,       0,            0,           1,           -1 },
     { "Firefox",  NULL,       NULL,       1 << 8,       0,           0,           -1 },
     { "eww",      NULL,       NULL,       0,            0,           1,           -1 },
+    { "spectacle",NULL,       NULL,       0,            1,           1,           -1 },
 };
 
 /* layout(s) */
@@ -158,11 +159,11 @@ static const Key keys[] = {
 	{0,				XF86XK_MonBrightnessDown,   spawn,	{.v = light_down}},
 
     // screenshot fullscreen and cropped
-    { MODKEY|ShiftMask,     		    XK_s,       spawn,          SHCMD("maim -s ~/Pictures/Screenshots/tmp.png && xclip -selection clipboard -t image/png -i ~/Pictures/Screenshots/tmp.png") },
+    { MODKEY|ShiftMask,     		    XK_s,       spawn,          SHCMD("spectacle") },
     { MODKEY,                           XK_a,       spawn,          SHCMD("rofi -show drun -theme ~/.config/AnDWM/rofi/config.rasi") },
     { MODKEY,                           XK_Return,  spawn,          SHCMD("kitty") },
     { MODKEY,                           XK_e,       spawn,          SHCMD("nemo") },
-    { MODKEY,                           XK_b,       spawn,          SHCMD("MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_USE_XINPUT2=1 LD_BIND_NOW=1 zen-browser") },
+    { MODKEY,                           XK_b,       spawn,          SHCMD("MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_USE_XINPUT2=1 LD_BIND_NOW=1 systemd-run --user --scope zen-browser --enable-features=UseOzonePlatform --ozone-platform=x11") },
     { MODKEY,                           XK_v,       spawn,          SHCMD("rofi -modi \"clipboard:greenclip print\" -show clipboard -run-command '{cmd}' -theme ~/.config/AnDWM/rofi/config_clip.rasi") },
     { MODKEY,                           XK_period,  spawn,          SHCMD("rofi -modi \"emoji:rofimoji --action copy --hidden-descriptions\" -show emoji -theme ~/.config/AnDWM/rofi/moji.rasi") },
     { MODKEY|ShiftMask,                 XK_c,       spawn,          SHCMD("~/.config/AnDWM/scripts/sh/highlight-pointer.sh") },
@@ -173,7 +174,7 @@ static const Key keys[] = {
     { MODKEY|ControlMask,               XK_t,       togglegaps,     {0} },
     { MODKEY,                           XK_w,       togglefloating, {0} },
     { MODKEY,                           XK_f,       togglefullscr,  {0} },
-    { MODKEY|ShiftMask,                 XK_b,       togglesticky,   {0} },
+    { MODKEY|ShiftMask,                 XK_b,       togglestickyclient,   {0} },
 
     { MODKEY|ShiftMask,                 XK_w,       tabmode,        { -1 } },
     { MODKEY,                           XK_j,       focusstack,     {.i = +1 } },

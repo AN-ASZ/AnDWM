@@ -7,7 +7,7 @@
  * allowed to select for this event mask.
  *
  * The event handlers of dwm are organized in an array which is accessed
- * whenever a new event has been fetched. This allows event dispatching
+ * whenever a new event has been fetched. This allows event dispatchingw
  * in O(1) time.
  *
  * Each child of the root window is called a client, except windows which have
@@ -38,6 +38,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
@@ -47,6 +48,7 @@
 #include <Imlib2.h>
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
+#include <stdbool.h>
 
 /* tile animation config */
 #define TILE_ANIM_STEPS 2   /* more = smoother, slower */
@@ -346,7 +348,8 @@ static void tagmon(const Arg *arg);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglefullscr(const Arg *arg);
-static void togglesticky(const Arg *arg);
+static void togglesticky(Client *c, int fullscreen);
+static void togglestickyclient(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void freeicon(Client *c);
@@ -424,8 +427,6 @@ static Window root, wmcheckwin;
 #define hiddenWinStackMax 100
 static int hiddenWinStackTop = -1;
 static Client *hiddenWinStack[hiddenWinStackMax];
-
-static Client *stickywin = NULL; // remembers the current sticky window
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -527,6 +528,12 @@ void applyrules(Client *c) {
 int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact) {
   int baseismin;
   Monitor *m = c->mon;
+
+  if (c->issticky) {
+    *w = MAX(1, *w);
+    *h = MAX(1, *h);
+    return 1;
+  }
 
   /* set minimum possible */
   *w = MAX(1, *w);
@@ -1531,9 +1538,9 @@ void drawbar(Monitor *m) {
 
   resizebarwin(m);
   for (c = m->clients; c; c = c->next) {
-    occ |= c->tags;
+    occ |= (c->issticky ? c->oldtags : c->tags);
     if (c->isurgent)
-      urg |= c->tags;
+      urg |= (c->issticky ? c->oldtags : c->tags);
   }
 
   drw_setscheme(drw, scheme[SchemeNorm]);
@@ -1822,6 +1829,17 @@ void expose(XEvent *e) {
   }
 }
 
+void write_fullscreen(int value) {
+  FILE *f = fopen("/tmp/isfullscreen", "w");
+  if (!f)
+    return;
+
+  fprintf(f, "%d", value); // write 0 or 1
+  fclose(f);
+}
+
+bool fullscreen_st = false;
+
 void focus(Client *c) {
   if (!c || (!ISVISIBLE(c) || HIDDEN(c)))
     for (c = selmon->stack; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->snext)
@@ -1847,6 +1865,15 @@ void focus(Client *c) {
     XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
   }
   selmon->sel = c;
+
+if(c && c->isfullscreen && !fullscreen_st) {
+    write_fullscreen(1);
+    fullscreen_st = 1;
+  } else if (fullscreen_st) {
+    write_fullscreen(0);
+    fullscreen_st = 0;
+  }
+
   drawbars();
   drawtabs();
 }
@@ -2138,106 +2165,255 @@ static Window cached_win = 0;
 static int cached_valid = 0;
 
 void togglepicom(const Arg *arg) {
-    Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
-    if (opacity == None)
-        return;
+  Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  if (opacity == None)
+    return;
 
-    if (picom_state == 0) {
-        Client *c = selmon->sel;
-        if (!c || !c->win)
-            return;
+  if (picom_state == 0) {
+    Client *c = selmon->sel;
+    if (!c || !c->win)
+      return;
 
-        // Cache values
-        cached_dpy = dpy;
-        cached_win = c->win;
-        cached_valid = 1;
+    // Cache values
+    cached_dpy = dpy;
+    cached_win = c->win;
+    cached_valid = 1;
 
-        unsigned long value = 0xffffffff; // fully opaque
+    unsigned long value = 0xffffffff; // fully opaque
 
-        XChangeProperty(cached_dpy, cached_win, opacity, XA_CARDINAL, 32,
-                        PropModeReplace, (unsigned char *)&value, 1);
+    XChangeProperty(cached_dpy, cached_win, opacity, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&value, 1);
 
-        picom_state = 1;
+    picom_state = 1;
 
-    } else {
-        if (!cached_valid)
-            return;
-        
-            XWindowAttributes wa;
-        if (!XGetWindowAttributes(cached_dpy, cached_win, &wa)) {
-            cached_valid = 0;
-            return;
-        }
+  } else {
+    if (!cached_valid)
+      return;
 
-        XDeleteProperty(cached_dpy, cached_win, opacity);
-
-        // Reset cache (important!)
-        cached_valid = 0;
-        cached_win = 0;
-        cached_dpy = NULL;
-
-        picom_state = 0;
+    XWindowAttributes wa;
+    if (!XGetWindowAttributes(cached_dpy, cached_win, &wa)) {
+      cached_valid = 0;
+      return;
     }
+
+    XDeleteProperty(cached_dpy, cached_win, opacity);
+
+    // Reset cache (important!)
+    cached_valid = 0;
+    cached_win = 0;
+    cached_dpy = NULL;
+
+    picom_state = 0;
+  }
 }
 
-unsigned int stick_state;
-void togglesticky(const Arg *arg) {
-  // 1. Safety check: ensure we have a monitor and a client to act on
-  if (!selmon || (!selmon->sel && !stickywin))
+// Example of fullscreen function
+/*
+void togglefullscr(const Arg *arg) {
+  if (selmon->sel)
+    setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
+}
+*/
+
+//    unsigned stick_state;
+//    void togglesticky(const Arg *arg){
+//      if (!selmon || (!selmon->sel && !stickywin))
+//        return;
+//
+//      if (!c)
+//        return;
+//
+//      if (c->isfullscreen)
+//        return;
+//
+//      if (!stickywin){
+//        stickywin = c;
+//        // Save state
+//        stickywin->oldtags = c->tags;
+//        // Visible on all tags
+//        stickywin->tags = TAGMASK;
+//        // Keep sticky windows tiled/managed, no fullscreen toggle on error
+//        path setfullscreen(stickywin, 0); stickywin->issticky = 1;
+//        stick_state=1;
+//
+//        // Move sticky window to bottom of stack so it does not cover others
+//        detachstack(stickywin);
+//        attachstack(stickywin);
+//        XLowerWindow(dpy, stickywin->win);
+//      } else {
+//        stickywin->tags = stickywin->oldtags ? stickywin->oldtags :
+//        selmon->tagset[selmon->seltags]; setfullscreen(stickywin, 0);
+//        stickywin->issticky = 0;
+//        stick_state=0;
+//
+//        stickywin = NULL; /* assignment, not comparison */
+//        arrange(selmon);
+//      }
+//    }
+// Global enviroment to store client name
+static Client *stickywin = NULL;
+unsigned stick_state;
+void togglesticky(Client *c, int fullscreen) {
+  if (!c || c->isfullscreen)
     return;
 
-  Client *c = stickywin ? stickywin : selmon->sel;
+  /* 1. If a DIFFERENT window is already sticky, unstick it first */
+  if (stickywin && stickywin != c) {
+    stickywin->isfloating = stickywin->wasfloating;
+    stickywin->tags = stickywin->oldtags;
+    stickywin->issticky = 0;
 
-  // Don't mess with fullscren windows
-  if (c->isfullscreen)
-    return;
+    /* Restore original geometry */
+    resizeclient(stickywin, stickywin->prevx, stickywin->prevy,
+                 stickywin->prevw, stickywin->prevh);
 
+    /* Remove EWMH Fullscreen state */
+    XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)0, 0);
+
+    detachstack(stickywin);
+    attachstack(stickywin);
+    XRaiseWindow(dpy, stickywin->win);
+
+    stickywin = NULL;
+    /* After unsticking the old one, we continue below to stick the new one */
+  }
+
+  /* 2. Toggle the current window 'c' */
   if (!stickywin) {
-
-    /* MAKE STICKY */
+    /* Make it Sticky */
     stickywin = c;
-    c->issticky = 1;
-    // Save state
-    c->oldtags = c->tags;
-    c->tags = TAGMASK; // Visible on all tags
-    togglepicom(NULL);
+    stickywin->issticky = 1;
+    stickywin->wasfloating = stickywin->isfloating;
 
-    c->wasfloating = c->isfloating;
-    c->prevx = c->x;
-    c->prevy = c->y;
-    c->prevw = c->w;
-    c->prevh = c->h;
+    /* Save state */
+    stickywin->oldtags = stickywin->tags;
+    stickywin->prevx = stickywin->x;
+    stickywin->prevy = stickywin->y;
+    stickywin->prevw = stickywin->w;
+    stickywin->prevh = stickywin->h;
 
-    c->isfloating = 1;
+    stickywin->isfloating = 1;
+    stickywin->tags = TAGMASK;
 
-    // Use monitor dimensions (m->mw/mh) instead of DisplayWidth
-    // This prevents the window from bleeding into other monitors
-    resizeclient_animated(c, (selmon->mx) - 1, (selmon->my) - 1, selmon->mw,
-                          selmon->mh);
+    /* Set EWMH state to Fullscreen so other windows don't overlap it easily */
+    XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)&netatom[NetWMFullscreen],
+                    1);
 
-    // Move to bottom of stack so it doesn't cover new windows
-    detachstack(c);
-    attachstack(c); // Or a custom attachbottom(c) if you have one
+    /* Resize to fill the monitor */
+    resizeclient(stickywin, stickywin->mon->mx - 1, stickywin->mon->my - 1,
+                 stickywin->mon->mw, stickywin->mon->mh);
 
-    XLowerWindow(dpy, c->win);
+    detachstack(stickywin);
+    attachstack(stickywin);
+    XLowerWindow(dpy, stickywin->win);
   } else {
-    /* UNSTICK */
+    /* 1. Reset EWMH first */
+    XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)0, 0);
 
-    c->issticky = 0;
-    c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
+    /* 2. Restore the floating status */
+    stickywin->isfloating = stickywin->wasfloating;
+    stickywin->tags = stickywin->oldtags;
+    stickywin->issticky = 0;
+    stickywin->isfullscreen = 0;
 
-    c->isfloating = c->wasfloating;
-    togglepicom(NULL);
-    if (c->isfloating) {
-      resizeclient(c, c->prevx, c->prevy, c->prevw, c->prevh);
-    }
+    /* 3. Explicitly move the client's variables back to old state */
+    stickywin->x = stickywin->prevx;
+    stickywin->y = stickywin->prevy;
+    stickywin->w = stickywin->prevw;
+    stickywin->h = stickywin->prevh;
+
+    /* 4. Now call resize to tell X11 where to put it */
+    resizeclient(stickywin, stickywin->x, stickywin->y, stickywin->w,
+                 stickywin->h);
+
+    detachstack(stickywin);
+    attachstack(stickywin);
+    XRaiseWindow(dpy, stickywin->win);
 
     stickywin = NULL;
   }
 
+  /* Finalize layout */
   focus(NULL);
-  arrange(selmon);
+  if (c->mon)
+    arrange(c->mon);
 }
+
+void togglestickyclient(const Arg *arg) {
+  /* if sticky window exists, always just toggle it off */
+  if (stickywin) {
+    togglesticky(stickywin, stickywin->isfullscreen);
+    return;
+  }
+
+  /* if no sticky window, make current focused window sticky */
+  Client *c = selmon->sel;
+  if (!c)
+    return;
+
+  togglesticky(c, c->isfullscreen);
+}
+
+// Old functions
+//    void togglesticky(const Arg *arg) {
+//      // 1. Safety check: ensure we have a monitor and a client to act on
+//      if (!selmon || (!selmon->sel && !stickywin))
+//        return;
+//
+//      Client *c = stickywin ? stickywin : selmon->sel;
+//
+//      // Don't mess with fullscren windows
+//      if (c->isfullscreen)
+//        return;
+//
+//      if (!stickywin) {
+//
+//        /* MAKE STICKY */
+//        stickywin = c;
+//        c->issticky = 1;
+//        // Save state
+//        c->oldtags = c->tags;
+//        c->tags = TAGMASK; // Visible on all tags
+//        togglepicom(NULL);
+//
+//        c->wasfloating = c->isfloating;
+//        c->prevx = c->x;
+//        c->prevy = c->y;
+//        c->prevw = c->w;
+//        c->prevh = c->h;
+//
+//        c->isfloating = 1;
+//
+//        // Use monitor dimensions (m->mw/mh) instead of DisplayWidth
+//        // This prevents the window from bleeding into other monitors
+//        setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
+//
+//        // Move to bottom of stack so it doesn't cover new windows
+//        detachstack(c);
+//        attachstack(c); // Or a custom attachbottom(c) if you have one
+//
+//        XLowerWindow(dpy, c->win);
+//      } else {
+//        /* UNSTICK */
+//
+//        c->issticky = 0;
+//        c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
+//
+//        c->isfloating = c->wasfloating;
+//        togglepicom(NULL);
+//        if (c->isfloating) {
+//          resizeclient(c, c->prevx, c->prevy, c->prevw, c->prevh);
+//        }
+//
+//        stickywin = NULL;
+//      }
+//
+//      focus(NULL);
+//      arrange(selmon);
+//    }
 
 void killclient(const Arg *arg) {
   if (!selmon->sel)
@@ -2252,8 +2428,8 @@ void killclient(const Arg *arg) {
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
-  if ((countwindows == 1) && (stick_state == 1)) {
-    togglesticky(NULL);
+  if ((countwindows() == 1) && (stick_state == 1)) {
+    return;
   }
 }
 
@@ -2287,6 +2463,7 @@ void manage(Window w, XWindowAttributes *wa) {
 
   updateicon(c);
   updatetitle(c);
+
   if (XGetTransientForHint(dpy, w, &trans) && (t = wintoclient(trans))) {
     c->mon = t->mon;
     c->tags = t->tags;
@@ -2358,6 +2535,13 @@ void manage(Window w, XWindowAttributes *wa) {
   arrange(c->mon);
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
+
+  updatetitle(c);
+  if (c->name && strstr(c->name, "Picture in picture") ||
+      c->name && strstr(c->name, "Picture-in-Picture")) {
+    togglesticky(selmon->sel, !selmon->sel->isfullscreen);
+  }
+
   focus(NULL);
 }
 
@@ -2976,6 +3160,11 @@ void restack(Monitor *m) {
 
   drawbar(m);
   drawtab(m);
+  if (!m || !m->sel)
+    return;
+  if (m->sel && m->sel->issticky) {
+    XLowerWindow(dpy, m->sel->win);
+  }
   if (!m->sel)
     return;
   if (m->sel->isfloating || !m->lt[m->sellt]->arrange)
@@ -3100,6 +3289,64 @@ void setnumdesktops(void) {
                   PropModeReplace, (unsigned char *)data, 1);
 }
 
+/*
+ * cgwrite_focused — GPU VRAM boost for focused window via cgroup
+ * Mirrors dwm-dmemcg-boost.sh logic: reads /proc/PID/cgroup, enables
+ * subtree_control recursively, and writes to dmem.low
+ */
+#define CGWRITE_BIN "/usr/local/bin/cgwrite"
+
+pid_t getwindowpid(Window win) {
+  Atom atom, type;
+  int format;
+  unsigned long nitems, bytes;
+  unsigned char *prop;
+  pid_t pid = -1;
+
+  atom = XInternAtom(dpy, "_NET_WM_PID", False);
+  if (atom == None)
+    return -1;
+
+  if (XGetWindowProperty(dpy, win, atom, 0L, 1L, False, XA_CARDINAL, &type,
+                         &format, &nitems, &bytes, &prop) == Success &&
+      prop != NULL) {
+    pid = *(pid_t *)prop;
+    XFree(prop);
+  }
+  return pid;
+}
+
+void cgwrite_focused(Window win) {
+  pid_t pid, child;
+  char pid_str[32];
+  char *argv[] = {CGWRITE_BIN, pid_str, NULL};
+
+  if (!win || win == None)
+    return;
+
+  pid = getwindowpid(win);
+  if (pid <= 0)
+    return;
+
+  snprintf(pid_str, sizeof(pid_str), "%d", (int)pid);
+
+  child = fork();
+  if (child < 0) {
+    /* fork failed — nothing we can do without logging infrastructure here */
+    return;
+  }
+
+  if (child == 0) {
+    /* Child: exec the setuid binary */
+    execv(CGWRITE_BIN, argv);
+    /* execv only returns on failure */
+    _exit(1);
+  }
+
+  /* Parent: reap child so it doesn't become a zombie */
+  waitpid(child, NULL, 0);
+}
+
 void setfocus(Client *c) {
   if (!c->neverfocus) {
     XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
@@ -3108,6 +3355,9 @@ void setfocus(Client *c) {
   }
   sendevent(c->win, wmatom[WMTakeFocus], NoEventMask, wmatom[WMTakeFocus],
             CurrentTime, 0, 0, 0);
+
+  /* Apply cgroup settings to focused window */
+  cgwrite_focused(c->win);
 }
 
 void setfullscreen(Client *c, int fullscreen) {
@@ -3134,6 +3384,11 @@ void setfullscreen(Client *c, int fullscreen) {
     c->h = c->oldh;
     resizeclient(c, c->x, c->y, c->w, c->h);
     arrange(c->mon);
+  if (fullscreen_st) {
+    write_fullscreen(0);
+    fullscreen_st = 0;
+  }
+
   }
 }
 
@@ -3575,6 +3830,12 @@ void unfocus(Client *c, int setfocus) {
 void unmanage(Client *c, int destroyed) {
   Monitor *m = c->mon;
   XWindowChanges wc;
+
+  /* cleanup sticky metadata if the removed client was sticky */
+  if (c == stickywin) {
+    stickywin = NULL;
+    stick_state = 0;
+  }
 
   detach(c);
   detachstack(c);

@@ -1,126 +1,255 @@
 #!/usr/bin/env bash
-set -e
-echo "This scripts is not fully runable and will return som error"
-echo "please run at you own RISK and always read what this scripts do with you machin"
-read -rp "Did you want to continue? (y/N): " ans
+
+set -euo pipefail
+
+echo "This script is experimental and may fail on some systems."
+echo "Please read the script before running it."
+read -rp "Do you want to continue? (y/N): " ans
 
 case "$ans" in
-  y|Y)
-    echo "=> Be careful!"
-    ;;
-  *)
-    exit 1
-    ;;
+    y|Y)
+        echo "=> Continuing installation..."
+        ;;
+    *)
+        echo "=> Aborted."
+        exit 1
+        ;;
 esac
 
-sudo pacman -Syu
+echo "==> Updating system..."
+sudo pacman -Syu --noconfirm
 
+# -------------------------
+# INSTALL YAY
+# -------------------------
 if ! command -v yay >/dev/null 2>&1; then
-    echo "yay not found, installing..."
+    echo "==> yay not found, installing..."
 
     sudo pacman -S --needed --noconfirm git base-devel
 
-    tmpdir=$(mktemp -d)
-    git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
-    (cd "$tmpdir/yay" && makepkg -si --noconfirm)
+    tmpdir="$(mktemp -d)"
 
-    sudo rm -rf "$tmpdir"
+    git clone https://aur.archlinux.org/yay.git "$tmpdir/yay"
+
+    (
+        cd "$tmpdir/yay"
+        makepkg -si --noconfirm
+    )
+
+    rm -rf "$tmpdir"
 else
-    echo "yay already installed, skipping"
+    echo "==> yay already installed"
 fi
 
+# -------------------------
+# INSTALL PACKAGES
+# -------------------------
 echo "==> Installing required packages..."
+
 sudo pacman -S --needed --noconfirm \
-    imlib2 dash kitty starship exa \
-    kitty rofi flameshot nemo zig libc++ pam libxcb xcb-util picom \
-    base-devel xorgproto libx11 libxext libxrandr libxinerama libxrender libxft \
-    libxfixes libxdamage libxcomposite libxmu libxtst p7zip feh polkit-gnome \
-    wireless_tools xorg-xsetroot wget xorg-server xorg-xinit xorg-xrandr xorg-xset xterm iw \
-    fish git nano fastfetch less dex playerctl
+    imlib2 \
+    dash \
+    kitty \
+    starship \
+    exa \
+    rofi \
+    flameshot \
+    nemo \
+    zig \
+    libc++ \
+    pam \
+    libxcb \
+    xcb-util \
+    picom \
+    base-devel \
+    xorgproto \
+    libx11 \
+    libxext \
+    libxrandr \
+    libxinerama \
+    libxrender \
+    libxft \
+    libxfixes \
+    libxdamage \
+    libxcomposite \
+    libxmu \
+    libxtst \
+    p7zip \
+    feh \
+    polkit-gnome \
+    wireless_tools \
+    xorg-xsetroot \
+    wget \
+    xorg-server \
+    xorg-xinit \
+    xorg-xrandr \
+    xorg-xset \
+    xterm \
+    iw \
+    fish \
+    git \
+    nano \
+    fastfetch \
+    less \
+    dex \
+    playerctl \
+    spectacle
 
-yay -S --needed --noconfirm zen-browser-bin xkblayout-state-git
+yay -S --needed --noconfirm \
+    zen-browser-bin \
+    xkblayout-state-git \
+    bibata-cursor-theme-bin \
+    rofi-greenclip \
+    ttf-iosevka
 
-echo "==> Installing cursor..."
-yay -S --noconfirm --needed bibata-cursor-theme-bin
+# -------------------------
+# COPY CONFIG
+# -------------------------
+echo "==> Copying configuration..."
 
-echo "==> Installing greenclip..."
-yay -S --noconfirm --needed rofi-greenclip
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-sudo cp -r AnDWM "$HOME"/.config/
+mkdir -p "$HOME/.config"
 
+if [[ -d "$SCRIPT_DIR/AnDWM" ]]; then
+    cp -r "$SCRIPT_DIR/AnDWM" "$HOME/.config/"
+else
+    echo "ERROR: AnDWM directory not found beside script."
+    exit 1
+fi
+
+# -------------------------
+# INSTALL FONTS
+# -------------------------
 echo "==> Installing fonts..."
-sudo pacman -S --noconfirm --needed ttf-iosevka-nerd noto-fonts noto-fonts-cjk noto-fonts-extra ttf-hack-nerd
-yay -S --noconfirm --needed ttf-iosevka
-mkdir -p ~/.local/share/fonts/
-cd ~/.local/share/fonts/
-sudo wget https://github.com/be5invis/Sarasa-Gothic/releases/download/v1.0.35/Sarasa-SuperTTC-1.0.35.7z
-sudo 7z x Sarasa-SuperTTC-1.0.35.7z
-rm Sarasa-SuperTTC-1.0.35.7z
+
+sudo pacman -S --needed --noconfirm \
+    ttf-iosevka-nerd \
+    noto-fonts \
+    noto-fonts-cjk \
+    noto-fonts-extra \
+    ttf-hack-nerd
+
+mkdir -p "$HOME/.local/share/fonts"
+
 fc-cache -fv
 
 # -------------------------
-# ASK BEFORE ENABLING LY
+# OPTIONAL LY INSTALL
 # -------------------------
-read -rp "Do you want to install Ly and disable other display manager? (y/n): " ans
-if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
-    cd "$HOME"/.config/AnDWM/
-    sudo git clone https://github.com/fairyglade/ly.git
-    cd ly
-    sudo zig build installexe -Dinit_system=systemd
-    cd ..
+read -rp "Do you want to install Ly and disable other display managers? (y/N): " ans
 
-    echo "=> Disabling other display managers..."
+if [[ "$ans" =~ ^[Yy]$ ]]; then
+    echo "==> Installing Ly..."
+
+    cd "$HOME/.config/AnDWM"
+
+    if [[ ! -d ly ]]; then
+        git clone https://github.com/fairyglade/ly.git
+    fi
+
+    cd ly
+
+    zig build installexe -Dinit_system=systemd
+
+    echo "==> Disabling other display managers..."
+
     sudo systemctl disable sddm.service || true
     sudo systemctl disable lightdm.service || true
     sudo systemctl disable gdm.service || true
     sudo systemctl disable lxdm.service || true
-    
 
-    echo "=> Enabling LY..."
-    sudo systemctl enable ly@tty2.service
+    echo "==> Enabling Ly..."
+
+    sudo systemctl enable ly.service || sudo systemctl enable ly@tty2.service
 else
-    echo "=> Skipping LY install step."
+    echo "==> Skipping Ly installation."
 fi
 
+# -------------------------
+# COPY DOTFILES
+# -------------------------
 echo "==> Copying dotfiles..."
-cd "$HOME/AnDWM/"
 
-sudo cp -r .config "$HOME"
+cd "$HOME/.config/AnDWM"
 
-sudo chmod -R a+rwX ~/.config
-sudo chown -R $USER:$USER ~/.config
+if [[ -d .config ]]; then
+    cp -r .config/* "$HOME/.config/"
+fi
 
-sudo cp -r .icons "$HOME"
+if [[ -d .icons ]]; then
+    cp -r .icons "$HOME/"
+fi
 
-sudo chmod -R a+rwX ~/.icons
-sudo chown -R $USER:$USER ~/.icons
+if [[ -d usr/share ]]; then
+    sudo cp -r usr/share/* /usr/share/
+fi
 
-sudo cp -r usr/share/* /usr/share
-sudo cp .Xresources "$HOME"
+if [[ -f .Xresources ]]; then
+    cp .Xresources "$HOME/"
+fi
 
-echo "==> Building QOL Packages..."
+chmod -R u+rwX "$HOME/.config"
+chmod -R u+rwX "$HOME/.icons" 2>/dev/null || true
 
-cd "$HOME/.config/AnDWM/scripts/"
-sudo g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes
-sudo g++ cpp/bat.cpp -o bin/bat -std=c++17 -O2 -pthread -march=native
-sudo g++ cpp/isolate.cpp -o bin/isolated -O2 -pthread -march=native
+# -------------------------
+# BUILD UTILITIES
+# -------------------------
+echo "==> Building helper utilities..."
 
+cd "$HOME/.config/AnDWM/scripts"
+
+mkdir -p bin
+
+g++ -Ofast -march=native cpp/bar.cpp \
+    -o bin/bar \
+    -lX11 \
+    -lXfixes
+
+g++ cpp/bat.cpp \
+    -o bin/bat \
+    -std=c++17 \
+    -O2 \
+    -pthread \
+    -march=native
+
+g++ cpp/isolate.cpp \
+    -o bin/isolated \
+    -O2 \
+    -pthread \
+    -march=native
+
+# -------------------------
+# BUILD AND INSTALL WM
+# -------------------------
 echo "==> Building and installing AnDWM..."
-cd "$HOME/.config/AnDWM/AnDWM/"
+
+cd "$HOME/.config/AnDWM/AnDWM"
+
+sudo make clean || true
 sudo make install
 
+# -------------------------
+# XSESSION ENTRY
+# -------------------------
 echo "==> Creating XSession entry..."
+
 DESKTOP_FILE="/usr/share/xsessions/AnDWM.desktop"
 
-sudo mkdir -p /usr/share/xsessions/
-sudo bash -c "cat > $DESKTOP_FILE" <<'EOF'
+sudo mkdir -p /usr/share/xsessions
+
+sudo tee "$DESKTOP_FILE" >/dev/null <<EOF
 [Desktop Entry]
 Name=AnDWM
-Comment=fork of chadwm makt it modern
+Comment=Modern ChadWM fork
 Exec=$HOME/.config/AnDWM/scripts/sh/run.sh
 Type=Application
 EOF
 
+# -------------------------
+# DONE
+# -------------------------
+echo
 echo "==> Installation complete!"
-echo "Reboot and select 'AnDWM' on login."
-echo "Thank you for chadwm"
+echo "Reboot and select 'AnDWM' from your login manager."
+echo "Thanks for using AnDWM."
