@@ -106,6 +106,7 @@ string green2 = "#a6da95";
 string teal2 = "#5BA643";
 string green3 = "#B8E9B4";
 
+
 // Variable for media scroll in bar
 int g_scroll_index = 0;
 
@@ -125,7 +126,6 @@ sdbus::IConnection &getSystemBus() {
 }
 
 // --- Utility Functions ---
-
 Display *getDisplay() {
   static Display *d = nullptr;
 
@@ -138,6 +138,15 @@ Display *getDisplay() {
   }
 
   return d;
+}
+
+
+void setFan(const std::string& value) {
+    std::string cmd = "/usr/local/bin/fan " + value;  // path to your fan binary
+    int ret = std::system(cmd.c_str());
+    if (ret != 0) {
+        std::cerr << "Failed to set fan control\n";
+    }
 }
 
 bool read_fullscreen() {
@@ -203,22 +212,47 @@ string escape_quotes(string s) {
   return res;
 }
 
+// Prevent Dim Fcuntion
 void setAutoDimTimeout(Display *dpy, int timeout) {
-  if (!dpy)
-    return;
+    if (!dpy)
+        return;
 
-  int current_timeout, interval, prefer_blanking, allow_exposures;
+    int current_timeout;
+    int interval;
+    int prefer_blanking;
+    int allow_exposures;
 
-  // Get current settings
-  XGetScreenSaver(dpy, &current_timeout, &interval, &prefer_blanking,
-                  &allow_exposures);
+    // Get current X11 screensaver settings
+    XGetScreenSaver(
+        dpy,
+        &current_timeout,
+        &interval,
+        &prefer_blanking,
+        &allow_exposures
+    );
 
-  // Set new timeout
-  XSetScreenSaver(dpy,
-                  timeout, // idle timeout before dim
-                  interval, prefer_blanking, allow_exposures);
+    // Set screensaver timeout
+    XSetScreenSaver(
+        dpy,
+        timeout,
+        interval,
+        prefer_blanking,
+        allow_exposures
+    );
 
-  XFlush(dpy);
+    // Disable DPMS (monitor power saving / dimming)
+    int event_base, error_base;
+
+    if (DPMSQueryExtension(dpy, &event_base, &error_base)) {
+        CARD16 power_level;
+        BOOL state;
+
+        if (DPMSInfo(dpy, &power_level, &state) && state) {
+            DPMSDisable(dpy);
+        }
+    }
+
+    XFlush(dpy);
 }
 
 // --- NetworkManager DBus Logic ---
@@ -660,6 +694,8 @@ string player_info(const string &app) {
 
 // --- Main Logic ---
 
+bool bat_st = 0;
+
 string handle() {
   auto f_wifi = pool.enqueue(get_wifi_info);
   auto f_mem_used = pool.enqueue(getMemUsedStr);
@@ -706,6 +742,14 @@ string handle() {
                  : (capacity >= 20) ? "󰁼"
                                     : "󰁺";
 
+  if(charging == 1 && !bat_st) {
+    setFan("0");
+    bat_st = 1;
+  } else if(charging == 0 && bat_st) {
+    setFan("2");
+    bat_st = 0;
+  }
+  
   string result;
 
   if (!player.empty()) {
