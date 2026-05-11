@@ -284,6 +284,7 @@ static void focusin(XEvent *e);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static void focuswin(const Arg *arg);
+static void focusunderpointer(void);
 static Atom getatomprop(Client *c, Atom prop);
 static Picture geticonprop(Window w, unsigned int *icw, unsigned int *ich);
 static int getrootptr(int *x, int *y);
@@ -611,6 +612,7 @@ void arrange(Monitor *m) {
   } else
     for (m = mons; m; m = m->next)
       arrangemon(m);
+  focusunderpointer();
 }
 
 void arrangemon(Monitor *m) {
@@ -1977,6 +1979,21 @@ int getrootptr(int *x, int *y) {
   return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
 
+void focusunderpointer(void) {
+  int x, y;
+  Client *c;
+  Monitor *m;
+
+  if (!getrootptr(&x, &y))
+    return;
+  if ((m = recttomon(x, y, 1, 1)) && m != selmon) {
+    unfocus(selmon->sel, 1);
+    selmon = m;
+  }
+  c = recttoclient(x, y, 1, 1);
+  focus(c);
+}
+
 long getstate(Window w) {
   int format;
   long result = -1;
@@ -2549,8 +2566,6 @@ void manage(Window w, XWindowAttributes *wa) {
       c->name && strstr(c->name, "Picture-in-Picture")) {
     togglesticky(selmon->sel, !selmon->sel->isfullscreen);
   }
-
-  focus(NULL);
 }
 
 void mappingnotify(XEvent *e) {
@@ -3004,35 +3019,40 @@ void removesystrayicon(Client *i) {
   free(i);
 }
 
-void resizeclient_animated(Client *c, int x, int y, int w, int h) {
-  if (!c)
-    return;
+void resizeclient_animated(Client *c, int x, int y, int w, int h)
+{
+	if (!c)
+		return;
 
-  int start_x = c->x;
-  int start_y = c->y;
-  int start_w = c->w;
-  int start_h = c->h;
+	const float steps[] = { 0.60f, 0.85f, 0.95f };
+	const int nsteps = sizeof(steps) / sizeof(steps[0]);
 
-  float steps[] = {0.6, 0.85, 0.95};
+	int sx = c->x;
+	int sy = c->y;
+	int sw = c->w;
+	int sh = c->h;
 
-  for (int i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
-    int nx = start_x + (x - start_x) * steps[i];
-    int ny = start_y + (y - start_y) * steps[i];
-    int nw = start_w + (w - start_w) * steps[i];
-    int nh = start_h + (h - start_h) * steps[i];
+	for (int i = 0; i < nsteps; i++) {
+		float t = steps[i];
 
-    XMoveResizeWindow(dpy, c->win, nx, ny, nw, nh);
-    XFlush(dpy);
-    usleep(12000); // adjust speed
-  }
+		int nx = sx + (int)((x - sx) * t);
+		int ny = sy + (int)((y - sy) * t);
+		int nw = sw + (int)((w - sw) * t);
+		int nh = sh + (int)((h - sh) * t);
 
-  // Final position
-  XMoveResizeWindow(dpy, c->win, x, y, w, h);
+		XMoveResizeWindow(dpy, c->win, nx, ny, nw, nh);
+		XSync(dpy, False);
 
-  c->x = x;
-  c->y = y;
-  c->w = w;
-  c->h = h;
+		usleep(12000);
+	}
+
+	c->x = x;
+	c->y = y;
+	c->w = w;
+	c->h = h;
+
+	XMoveResizeWindow(dpy, c->win, x, y, w, h);
+	XSync(dpy, False);
 }
 
 void resize(Client *c, int x, int y, int w, int h, int interact) {
@@ -3040,14 +3060,12 @@ void resize(Client *c, int x, int y, int w, int h, int interact) {
     return;
 
   if (applysizehints(c, &x, &y, &w, &h, interact)) {
-    if (!c->isfloating) {
-      if (animate_tiled)
-        resizeclient_animated(
-            c, x, y, w,
-            h); // this function make animation relly play of windows move
-      else
-        resizeclient(c, x, y, w, h); // instant for tiled
-    } else
+     // if (!c->isfloating) {
+     //   if (animate_tiled)
+     //     resizeclient_animated(c, x, y, w,h); // this function make animation relly play of windows move
+     //   else
+     //     resizeclient(c, x, y, w, h); // instant for tiled
+     // } else
       resizeclient(c, x, y, w, h); // instant for floating
   }
 }
@@ -3888,7 +3906,6 @@ void unmanage(Client *c, int destroyed) {
     XUngrabServer(dpy);
   }
   free(c);
-  focus(NULL);
   updateclientlist();
   arrange(m);
 }
