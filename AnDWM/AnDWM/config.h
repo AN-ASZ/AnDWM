@@ -103,6 +103,7 @@ static const Rule rules[] = {
     { "Gimp",     NULL,       NULL,       0,            0,           1,           -1 },
     { "Firefox",  NULL,       NULL,       1 << 8,       0,           0,           -1 },
     { "eww",      NULL,       NULL,       0,            0,           1,           -1 },
+    { "spectacle",NULL,       NULL,       0,            1,           1,           -1 },
 };
 
 /* layout(s) */
@@ -158,7 +159,7 @@ static const Key keys[] = {
 	{0,				XF86XK_MonBrightnessDown,   spawn,	{.v = light_down}},
 
     // screenshot fullscreen and cropped
-    { MODKEY|ShiftMask,     		    XK_s,       spawn,          SHCMD("maim -s ~/Pictures/Screenshots/tmp.png && xclip -selection clipboard -t image/png -i ~/Pictures/Screenshots/tmp.png") },
+    { MODKEY|ShiftMask,     		    XK_s,       spawn,          SHCMD("spectacle") },
     { MODKEY,                           XK_a,       spawn,          SHCMD("rofi -show drun -theme ~/.config/AnDWM/rofi/config.rasi") },
     { MODKEY,                           XK_Return,  spawn,          SHCMD("kitty") },
     { MODKEY,                           XK_e,       spawn,          SHCMD("nemo") },

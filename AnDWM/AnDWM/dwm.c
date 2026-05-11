@@ -7,7 +7,7 @@
  * allowed to select for this event mask.
  *
  * The event handlers of dwm are organized in an array which is accessed
- * whenever a new event has been fetched. This allows event dispatching
+ * whenever a new event has been fetched. This allows event dispatchingw
  * in O(1) time.
  *
  * Each child of the root window is called a client, except windows which have
@@ -48,6 +48,7 @@
 #include <Imlib2.h>
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
+#include <stdbool.h>
 
 /* tile animation config */
 #define TILE_ANIM_STEPS 2   /* more = smoother, slower */
@@ -1837,6 +1838,8 @@ void write_fullscreen(int value) {
   fclose(f);
 }
 
+bool fullscreen_st = false;
+
 void focus(Client *c) {
   if (!c || (!ISVISIBLE(c) || HIDDEN(c)))
     for (c = selmon->stack; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->snext)
@@ -1862,6 +1865,15 @@ void focus(Client *c) {
     XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
   }
   selmon->sel = c;
+
+if(c && c->isfullscreen && !fullscreen_st) {
+    write_fullscreen(1);
+    fullscreen_st = 1;
+  } else if (fullscreen_st) {
+    write_fullscreen(0);
+    fullscreen_st = 0;
+  }
+
   drawbars();
   drawtabs();
 }
@@ -3282,49 +3294,7 @@ void setnumdesktops(void) {
  * Mirrors dwm-dmemcg-boost.sh logic: reads /proc/PID/cgroup, enables
  * subtree_control recursively, and writes to dmem.low
  */
-#define CGROUP_PATH_MAX 512
-
-void cgwrite_log_error(const char *fmt, ...) {
-  va_list ap;
-  char msg[1024];
-  char logpath[CGROUP_PATH_MAX];
-  const char *user = getenv("USER");
-  FILE *f;
-  time_t t = time(NULL);
-  struct tm tm;
-  char timestr[64];
-
-  if (user) {
-    snprintf(logpath, sizeof(logpath), "/home/%s/dwm-cgwrite-errors.log", user);
-  } else {
-    strcpy(logpath, "/tmp/dwm-cgwrite-errors.log");
-  }
-
-  if (!fmt)
-    return;
-
-  va_start(ap, fmt);
-  vsnprintf(msg, sizeof(msg), fmt, ap);
-  va_end(ap);
-
-  if (t != (time_t)-1 && localtime_r(&t, &tm)) {
-    if (!strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", &tm))
-      timestr[0] = '\0';
-  } else {
-    timestr[0] = '\0';
-  }
-
-  f = fopen(logpath, "a");
-  if (!f)
-    return;
-
-  if (timestr[0])
-    fprintf(f, "%s %s\n", timestr, msg);
-  else
-    fprintf(f, "%s\n", msg);
-
-  fclose(f);
-}
+#define CGWRITE_BIN "/usr/local/bin/cgwrite"
 
 pid_t getwindowpid(Window win) {
   Atom atom, type;
@@ -3346,185 +3316,35 @@ pid_t getwindowpid(Window win) {
   return pid;
 }
 
-/* Get cgroup relative path from /proc/PID/cgroup */
-int get_cgroup_path(pid_t pid, char *buf, size_t bufsize) {
-  char cgroup_file[64];
-  FILE *f;
-  char line[512];
-
-  if (pid <= 0 || !buf || bufsize == 0)
-    return 0;
-
-  snprintf(cgroup_file, sizeof(cgroup_file), "/proc/%d/cgroup", pid);
-  f = fopen(cgroup_file, "r");
-  if (!f) {
-    cgwrite_log_error("get_cgroup_path: cannot open %s: %s", cgroup_file,
-                      strerror(errno));
-    return 0;
-  }
-
-  /* Read first line, extract relative path (third field after colon) */
-  if (fgets(line, sizeof(line), f)) {
-    char *rel_path = strchr(line, ':');
-    if (rel_path) {
-      rel_path = strchr(rel_path + 1, ':');
-      if (rel_path) {
-        rel_path++; /* skip colon */
-        /* remove newline */
-        char *nl = strchr(rel_path, '\n');
-        if (nl)
-          *nl = '\0';
-        snprintf(buf, bufsize, "/sys/fs/cgroup%s", rel_path);
-        fclose(f);
-        return 1;
-      }
-    }
-  }
-  cgwrite_log_error("get_cgroup_path: malformed /proc/%d/cgroup", pid);
-  fclose(f);
-  return 0;
-}
-
-/* Write to cgroup file via helper or directly if permitted */
-void write_cgroup_file(const char *path, const char *value) {
-  FILE *f;
-  const char *helper = "/usr/lib/dwm-dmemcg-boost/cgwrite";
-
-  if (!path || !value)
-    return;
-
-  /* Try direct write first */
-  f = fopen(path, "w");
-  if (f) {
-    if (fputs(value, f) == EOF) {
-      cgwrite_log_error("direct cgroup write failed for %s: %s", path,
-                        strerror(errno));
-    }
-    fclose(f);
-  } else {
-    /* If direct write fails, attempt via setuid helper */
-    char cmd[768];
-    int status;
-    snprintf(cmd, sizeof(cmd), "echo '%s' | %s '%s' 2>/dev/null", value, helper,
-             path);
-    status = system(cmd);
-    if (status != 0)
-      cgwrite_log_error("helper cgroup write failed for %s (status %d)", path,
-                        status);
-  }
-}
-
-/* Enable dmem in subtree_control recursively up to root */
-void enable_dmem_subtree(const char *cgroup_path) {
-  char path[CGROUP_PATH_MAX];
-  char parent[CGROUP_PATH_MAX];
-  char subtree_file[CGROUP_PATH_MAX];
-  FILE *f;
-
-  if (!cgroup_path || strlen(cgroup_path) < strlen("/sys/fs/cgroup"))
-    return;
-
-  strncpy(path, cgroup_path, sizeof(path) - 1);
-  path[sizeof(path) - 1] = '\0';
-
-  while (strcmp(path, "/sys/fs/cgroup") != 0) {
-    snprintf(subtree_file, sizeof(subtree_file), "%s/cgroup.subtree_control",
-             path);
-
-    /* Check if dmem already enabled */
-    f = fopen(subtree_file, "r");
-    if (f) {
-      char buf[256];
-      int found = 0;
-      while (fgets(buf, sizeof(buf), f)) {
-        if (strstr(buf, "dmem")) {
-          found = 1;
-          break;
-        }
-      }
-      fclose(f);
-      if (found) {
-        /* Get parent directory */
-        char *last_slash = strrchr(path, '/');
-        if (last_slash && last_slash != path) {
-          *last_slash = '\0';
-        } else {
-          break;
-        }
-        continue;
-      }
-    }
-
-    /* Enable dmem */
-    write_cgroup_file(subtree_file, "+dmem\n");
-
-    /* Move to parent */
-    char *last_slash = strrchr(path, '/');
-    if (last_slash && last_slash != path) {
-      *last_slash = '\0';
-    } else {
-      break;
-    }
-  }
-}
-
 void cgwrite_focused(Window win) {
-  pid_t pid;
-  char cgroup_full[CGROUP_PATH_MAX];
-  char dmem_low_path[CGROUP_PATH_MAX];
-  char boost_value[128];
-  const char *drm_resource = "0"; /* Default GPU resource */
-  const char *boost_size = "4294967296"; /* 4G in bytes */
+  pid_t pid, child;
+  char pid_str[32];
+  char *argv[] = {CGWRITE_BIN, pid_str, NULL};
 
   if (!win || win == None)
     return;
 
   pid = getwindowpid(win);
-  if (pid <= 0) {
-    cgwrite_log_error("cgwrite_focused: no PID for window 0x%lx", win);
+  if (pid <= 0)
+    return;
+
+  snprintf(pid_str, sizeof(pid_str), "%d", (int)pid);
+
+  child = fork();
+  if (child < 0) {
+    /* fork failed — nothing we can do without logging infrastructure here */
     return;
   }
 
-  /* Verify process exists */
-  if (kill(pid, 0) != 0) {
-    cgwrite_log_error("cgwrite_focused: process %d not running for window 0x%lx",
-                      pid, win);
-    return;
+  if (child == 0) {
+    /* Child: exec the setuid binary */
+    execv(CGWRITE_BIN, argv);
+    /* execv only returns on failure */
+    _exit(1);
   }
 
-  /* Get cgroup path from /proc/PID/cgroup */
-  if (!get_cgroup_path(pid, cgroup_full, sizeof(cgroup_full))) {
-    cgwrite_log_error("cgwrite_focused: cannot resolve cgroup for pid %d", pid);
-    return;
-  }
-
-  /* Validate path is under /sys/fs/cgroup */
-  if (strncmp(cgroup_full, "/sys/fs/cgroup", strlen("/sys/fs/cgroup")) != 0) {
-    cgwrite_log_error("cgwrite_focused: cgroup path outside root: %s", cgroup_full);
-    return;
-  }
-
-  /* Reject path traversal */
-    if (strstr(cgroup_full, "..") != NULL) {
-    cgwrite_log_error("cgwrite_focused: invalid cgroup path traversal: %s", cgroup_full);
-    return;
-  }
-
-  /* Verify cgroup directory exists */
-  if (access(cgroup_full, F_OK) != 0) {
-    cgwrite_log_error("cgwrite_focused: cgroup path does not exist: %s", cgroup_full);
-    return;
-  }
-
-  /* Enable dmem in subtree controls recursively */
-  enable_dmem_subtree(cgroup_full);
-
-  /* Write boost to dmem.low */
-  snprintf(dmem_low_path, sizeof(dmem_low_path), "%s/dmem.low", cgroup_full);
-  snprintf(boost_value, sizeof(boost_value), "%s %s\n", drm_resource,
-           boost_size);
-
-  write_cgroup_file(dmem_low_path, boost_value);
+  /* Parent: reap child so it doesn't become a zombie */
+  waitpid(child, NULL, 0);
 }
 
 void setfocus(Client *c) {
@@ -3535,7 +3355,7 @@ void setfocus(Client *c) {
   }
   sendevent(c->win, wmatom[WMTakeFocus], NoEventMask, wmatom[WMTakeFocus],
             CurrentTime, 0, 0, 0);
-  
+
   /* Apply cgroup settings to focused window */
   cgwrite_focused(c->win);
 }
@@ -3552,8 +3372,6 @@ void setfullscreen(Client *c, int fullscreen) {
     c->isfloating = 1;
     resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
     XRaiseWindow(dpy, c->win);
-    write_fullscreen(1);
-
   } else if (!fullscreen && c->isfullscreen) {
     XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
@@ -3566,7 +3384,11 @@ void setfullscreen(Client *c, int fullscreen) {
     c->h = c->oldh;
     resizeclient(c, c->x, c->y, c->w, c->h);
     arrange(c->mon);
+  if (fullscreen_st) {
     write_fullscreen(0);
+    fullscreen_st = 0;
+  }
+
   }
 }
 
