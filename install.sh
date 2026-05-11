@@ -92,7 +92,8 @@ sudo pacman -S --needed --noconfirm \
     fastfetch \
     less \
     dex \
-    playerctl
+    playerctl \
+    spectacle
 
 yay -S --needed --noconfirm \
     zen-browser-bin \
