@@ -3,7 +3,7 @@
 #include <X11/XF86keysym.h>
 
 /* appearance */
-static const unsigned int borderpx  = 1;        /* border pixel of windows */
+static const unsigned int borderpx  = 2;        /* border pixel of windows */
 static const unsigned int default_border = 0;   /* to switch back to default border after dynamic border resizing via keybinds */
 static const unsigned int snap      = 14;       /* snap pixel */
 static const unsigned int gappih    = 14;       /* horiz inner gap between windows */
@@ -23,10 +23,12 @@ static const int topbar             = 1;        /* 0 means bottom bar */
 static const int horizpadbar        = 6;
 static const int vertpadbar         = 12;
 static const int vertpadtab         = 35;
-static const int horizpadtabi       = 15;
-static const int horizpadtabo       = 15;
-static const int scalepreview       = 4;
-static const int tag_preview        = 0;        /* 1 means enable, 0 is off */
+static const int horizpadtabi       = 16;
+static const int horizpadtabo       = 16;
+static const int scalepreview       = 7;
+static const int tag_preview        = 1;        /* 1 means enable, 0 is off */
+static const int tag_preview_x_offset = 15;
+static const int tag_preview_y_offset = 15;
 static const int colorfultag        = 1;        /* 0 means use SchemeSel for selected non vacant tag */
 static const char buttonbar[]       = "";
 static const char *upvol[]   = { "/usr/bin/pactl", "set-sink-volume", "0", "+5%",     NULL };

@@ -628,9 +628,10 @@ void arrangemon(Monitor *m) {
   updatesystray();
   XMoveResizeWindow(dpy, m->tabwin, m->wx + m->gappov, m->ty,
                     m->ww - 2 * m->gappov, th);
-  XMoveWindow(dpy, m->tagwin, m->wx + m->gappov,
-              m->by + (m->topbar ? (bh + m->gappoh)
-                                 : (-(m->mh / scalepreview) - m->gappoh)));
+  XMoveResizeWindow(dpy, m->tagwin, m->wx + m->gappov + tag_preview_x_offset,
+                    m->by + (m->topbar ? (bh + m->gappoh + tag_preview_y_offset)
+                                       : (-(m->mh / scalepreview) - m->gappoh - tag_preview_y_offset)),
+                    m->mw / scalepreview, m->mh / scalepreview);
   strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof(m->ltsymbol) - 1);
   m->ltsymbol[sizeof(m->ltsymbol) - 1] = '\0';
   if (m->lt[m->sellt]->arrange)
@@ -2358,7 +2359,7 @@ void togglesticky(Client *c, int fullscreen) {
                     1);
 
     /* Resize to fill the monitor */
-    resizeclient(stickywin, stickywin->mon->mx - 1, stickywin->mon->my - 1,
+    resizeclient(stickywin, stickywin->mon->mx - borderpx, stickywin->mon->my - borderpx,
                  stickywin->mon->mw, stickywin->mon->mh);
 
     detachstack(stickywin);
@@ -4039,7 +4040,7 @@ void updatepreview(void) {
                              .event_mask = ButtonPressMask | ExposureMask};
   for (m = mons; m; m = m->next) {
     m->tagwin = XCreateWindow(
-        dpy, root, m->wx, m->by + bh, m->mw / 4, m->mh / 4, 0,
+        dpy, root, m->wx, m->by + bh, m->mw / scalepreview, m->mh / scalepreview, 0,
         DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->tagwin, cursor[CurNormal]->cursor);
