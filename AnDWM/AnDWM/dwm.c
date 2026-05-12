@@ -330,7 +330,7 @@ static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2,
 static void sendmon(Client *c, Monitor *m);
 static void setclientstate(Client *c, long state);
 static void setclienttagprop(Client *c);
-static void setworkspaceanimation(Monitor *m, const char *val);
+static void setworkspaceanimation(Monitor *m, int val);
 static void setcurrentdesktop(void);
 static void setdesktopnames(void);
 static void setfocus(Client *c);
@@ -1242,7 +1242,7 @@ void dragcfact(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-  setworkspaceanimation(selmon, "yes");
+  setworkspaceanimation(selmon, 1);
   int prev_animate = animate_tiled;
   /* disable animated tiled resize while dragging to use instant resizeclient */
   animate_tiled = 0;
@@ -1284,7 +1284,7 @@ void dragcfact(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  setworkspaceanimation(selmon, "no");
+  setworkspaceanimation(selmon, 0);
   animate_tiled = prev_animate;
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
@@ -1447,7 +1447,7 @@ void dragmfact(const Arg *arg) {
           CurrentTime) != GrabSuccess)
     return;
   if (m->sel)
-    setworkspaceanimation(m, "yes");
+    setworkspaceanimation(m, 1);
 
   int prev_animate = animate_tiled;
   /* disable animated tiled resize while dragging to use instant resizeclient */
@@ -1516,7 +1516,7 @@ void dragmfact(const Arg *arg) {
 
   XUngrabPointer(dpy, CurrentTime);
   if (m->sel)
-    setworkspaceanimation(m, "no");
+    setworkspaceanimation(m, 0);
   animate_tiled = prev_animate;
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
@@ -2734,8 +2734,9 @@ void movemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                  PropModeReplace, (unsigned char *)"yes", 3);
+  long animation_data = 1;
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&animation_data, 1);
   if (!getrootptr(&x, &y))
     return;
   /* Calculate offset from window top-left to mouse position */
@@ -2795,8 +2796,9 @@ void movemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                  PropModeReplace, (unsigned char *)"no", 2);
+  long animation_data_off = 0;
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&animation_data_off, 1);
   // If window was originally tiled, return to tiled after drag
   if (was_tiled && c->isfloating) {
     togglefloating(NULL);
@@ -2835,8 +2837,9 @@ void placemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                  PropModeReplace, (unsigned char *)"yes", 3);
+  long animation_data = 1;
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&animation_data, 1);
 
   c->isfloating = 0;
   c->beingmoved = 1;
@@ -2929,8 +2932,9 @@ void placemouse(const Arg *arg) {
     }
   } while (ev.type != ButtonRelease);
   XUngrabPointer(dpy, CurrentTime);
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                  PropModeReplace, (unsigned char *)"no", 2);
+  long animation_data_off = 0;
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&animation_data_off, 1);
 
   if ((m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1)) && m != c->mon) {
     detach(c);
@@ -3178,8 +3182,9 @@ void resizemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                  PropModeReplace, (unsigned char *)"yes", 3);
+  long animation_data = 1;
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&animation_data, 1);
 
   if (!getrootptr(&mx, &my))
     return;
@@ -3219,8 +3224,9 @@ void resizemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                  PropModeReplace, (unsigned char *)"no", 2);
+  long animation_data_off = 0;
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&animation_data_off, 1);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 
@@ -3755,12 +3761,13 @@ void setclienttagprop(Client *c) {
                   PropModeReplace, (unsigned char *)data, 2);
 }
 
-static void setworkspaceanimation(Monitor *m, const char *val) {
+static void setworkspaceanimation(Monitor *m, int val) {
   Client *c;
+  long data = val;
   for (c = m->clients; c; c = c->next)
     if (ISVISIBLE(c))
-      XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                      PropModeReplace, (unsigned char *)val, strlen(val));
+      XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                      PropModeReplace, (unsigned char *)&data, 1);
 }
 
 void switchtag(void) {
