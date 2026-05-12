@@ -2586,16 +2586,16 @@ void manage(Window w, XWindowAttributes *wa) {
   if (c->mon == selmon)
     unfocus(selmon->sel, 0);
   c->mon->sel = c;
-  arrange(c->mon);
+  updatetitle(c);
+  if (c->name && (strstr(c->name, "Picture in picture") ||
+                  strstr(c->name, "Picture-in-Picture")))
+    togglesticky(c, 0);
+  else
+    arrange(c->mon);
+
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
   focus(NULL);
-
-  updatetitle(c);
-  if (c->name && strstr(c->name, "Picture in picture") ||
-      c->name && strstr(c->name, "Picture-in-Picture")) {
-    togglesticky(selmon->sel, !selmon->sel->isfullscreen);
-  }
 }
 
 void mappingnotify(XEvent *e) {
@@ -2719,7 +2719,7 @@ void movemouse(const Arg *arg) {
 
   if (!(c = selmon->sel))
     return;
-  if (c->isfullscreen) /* no support moving fullscreen windows by mouse */
+  if (c->isfullscreen || c->issticky) /* no support moving fullscreen or sticky windows by mouse */
     return;
   if (!c->isfloating && selmon->lt[selmon->sellt]->arrange) {
     was_tiled = 1;
@@ -2830,7 +2830,7 @@ void placemouse(const Arg *arg) {
       !c->mon->lt[c->mon->sellt]->arrange) /* no support for placemouse when
                                               floating layout is used */
     return;
-  if (c->isfullscreen) /* no support placing fullscreen windows by mouse */
+  if (c->isfullscreen || c->issticky) /* no support placing fullscreen or sticky windows by mouse */
     return;
   restack(selmon);
   prevr = c;
@@ -3168,7 +3168,7 @@ void resizemouse(const Arg *arg) {
   int ocx, ocy, ocw, och, nw, nh;
   int mx, my;
 
-  if (!(c = selmon->sel) || c->isfullscreen)
+  if (!(c = selmon->sel) || c->isfullscreen || c->issticky)
     return;
 
   restack(selmon);
@@ -3852,7 +3852,7 @@ void togglebar(const Arg *arg) {
 void togglefloating(const Arg *arg) {
   if (!selmon->sel)
     return;
-  if (selmon->sel->isfullscreen) /* no support for fullscreen windows */
+  if (selmon->sel->isfullscreen || selmon->sel->issticky) /* no support for fullscreen or sticky windows */
     return;
   selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
   if (selmon->sel->isfloating)
