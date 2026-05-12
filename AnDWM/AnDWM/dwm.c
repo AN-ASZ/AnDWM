@@ -199,6 +199,7 @@ struct Client {
   unsigned int tags;
   int isfixed, iscentered, isfloating, isurgent, neverfocus, oldstate,
       isfullscreen;
+  int isontop;
   int issticky;     /* sticky to background */
   int stickeystate; /* previous state before being sticky */
   int prevfloating;
@@ -234,6 +235,7 @@ typedef struct {
   unsigned int tags;
   int iscentered;
   int isfloating;
+  int isontop;
   int monitor;
 } Rule;
 
@@ -312,6 +314,7 @@ static void propertynotify(XEvent *e);
 static void restart(const Arg *arg);
 static Client *recttoclient(int x, int y, int w, int h);
 static Monitor *recttomon(int x, int y, int w, int h);
+static Client *clientfromwin(Window w);
 static void removesystrayicon(Client *i);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
@@ -385,6 +388,7 @@ static Client *wintosystrayicon(Window w);
 static int xerror(Display *dpy, XErrorEvent *ee);
 static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
+static Window ontopsibling(Monitor *m, Client *exclude);
 static void zoom(const Arg *arg);
 
 /* variables */
@@ -501,6 +505,7 @@ void applyrules(Client *c) {
   /* rule matching */
   c->iscentered = 0;
   c->isfloating = 0;
+  c->isontop = 0;
   c->tags = 0;
   XGetClassHint(dpy, c->win, &ch);
   class = ch.res_class ? ch.res_class : broken;
@@ -513,6 +518,9 @@ void applyrules(Client *c) {
         (!r->instance || strstr(instance, r->instance))) {
       c->iscentered = r->iscentered;
       c->isfloating = r->isfloating;
+      c->isontop = r->isontop;
+      if (c->isontop)
+        c->isfloating = 1;
       c->tags |= r->tags;
       for (m = mons; m && m->num != r->monitor; m = m->next)
         ;
@@ -1852,12 +1860,8 @@ bool fullscreen_st = false;
 
 void focus(Client *c) {
   if (!c || (!ISVISIBLE(c) || HIDDEN(c)))
-    for (c = selmon->stack; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->snext)
+    for (c = selmon->stack; c && (!ISVISIBLE(c) || HIDDEN(c) || c->issticky); c = c->snext)
       ;
-  /* skip sticky windows */
-  if (c && c->issticky) {
-    c = NULL;
-  }
   if (selmon->sel && selmon->sel != c)
     unfocus(selmon->sel, 0);
   if (c) {
@@ -1979,18 +1983,45 @@ int getrootptr(int *x, int *y) {
   return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
 
+/* Resolve a managed client from an arbitrary descendant window (true window
+ * under the pointer). recttoclient() only considers tiled clients, which
+ * desynchronised border/focus from the actual top window when floats or
+ * stacked tiled clients overlapped. */
+static Client *clientfromwin(Window w) {
+  Client *c;
+  Window parent, rootret, *children = NULL;
+  unsigned int n;
+
+  while (w && w != root) {
+    if ((c = wintoclient(w)))
+      return c;
+    children = NULL;
+    if (!XQueryTree(dpy, w, &rootret, &parent, &children, &n))
+      break;
+    if (children)
+      XFree(children);
+    w = parent;
+  }
+  return NULL;
+}
+
 void focusunderpointer(void) {
   int x, y;
+  int di;
+  unsigned int dui;
+  Window rootret, child;
   Client *c;
   Monitor *m;
 
-  if (!getrootptr(&x, &y))
+  if (!XQueryPointer(dpy, root, &rootret, &child, &x, &y, &di, &di, &dui))
     return;
   if ((m = recttomon(x, y, 1, 1)) && m != selmon) {
     unfocus(selmon->sel, 1);
     selmon = m;
   }
-  c = recttoclient(x, y, 1, 1);
+  c = clientfromwin(child);
+  if (!c)
+    c = recttoclient(x, y, 1, 1);
   focus(c);
 }
 
@@ -2441,7 +2472,7 @@ void togglestickyclient(const Arg *arg) {
 //    }
 
 void killclient(const Arg *arg) {
-  if (!selmon->sel)
+  if (!selmon->sel || selmon->sel->issticky)
     return;
   if (!sendevent(selmon->sel->win, wmatom[WMDelete], NoEventMask,
                  wmatom[WMDelete], CurrentTime, 0, 0, 0)) {
@@ -2453,13 +2484,10 @@ void killclient(const Arg *arg) {
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
-  if ((countwindows() == 1) && (stick_state == 1)) {
-    return;
-  }
 }
 
 void forcekillclient(const Arg *arg) {
-  if (!selmon->sel)
+  if (!selmon->sel || selmon->sel->issticky)
     return;
 
   XGrabServer(dpy);
@@ -2560,6 +2588,7 @@ void manage(Window w, XWindowAttributes *wa) {
   arrange(c->mon);
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
+  focus(NULL);
 
   updatetitle(c);
   if (c->name && strstr(c->name, "Picture in picture") ||
@@ -2805,7 +2834,8 @@ void placemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
-  setworkspaceanimation(selmon, "yes");
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
+                  PropModeReplace, (unsigned char *)"yes", 3);
 
   c->isfloating = 0;
   c->beingmoved = 1;
@@ -2898,7 +2928,8 @@ void placemouse(const Arg *arg) {
     }
   } while (ev.type != ButtonRelease);
   XUngrabPointer(dpy, CurrentTime);
-  setworkspaceanimation(c->mon, "no");
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
+                  PropModeReplace, (unsigned char *)"no", 2);
 
   if ((m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1)) && m != c->mon) {
     detach(c);
@@ -3099,8 +3130,28 @@ void resizeclient(Client *c, int x, int y, int w, int h) {
   wc.border_width = c->bw;
   XConfigureWindow(dpy, c->win, CWX | CWY | CWWidth | CWHeight | CWBorderWidth,
                    &wc);
+  if (!c->isfullscreen && !c->isontop) {
+    Window s = ontopsibling(c->mon, c);
+    if (s) {
+      XWindowChanges wcs;
+      wcs.sibling = s;
+      wcs.stack_mode = Below;
+      XConfigureWindow(dpy, c->win, CWSibling | CWStackMode, &wcs);
+    }
+  }
   configure(c);
   XSync(dpy, False);
+}
+
+static Window ontopsibling(Monitor *m, Client *exclude) {
+  Client *c;
+  if (!m)
+    return None;
+  for (c = m->stack; c; c = c->snext)
+    if (c != exclude && c->isontop && !c->issticky && !c->isfullscreen &&
+        ISVISIBLE(c))
+      return c->win;
+  return None;
 }
 
 void resizemouse(const Arg *arg) {
@@ -3125,11 +3176,8 @@ void resizemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-  if (selmon->lt[selmon->sellt]->arrange)
-    setworkspaceanimation(selmon, "yes");
-  else
-    XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                     PropModeReplace, (unsigned char *)"yes", 3);
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
+                  PropModeReplace, (unsigned char *)"yes", 3);
 
   if (!getrootptr(&mx, &my))
     return;
@@ -3169,11 +3217,8 @@ void resizemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  if (selmon->lt[selmon->sellt]->arrange)
-    setworkspaceanimation(selmon, "no");
-  else
-    XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
-                     PropModeReplace, (unsigned char *)"no", 2);
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_STRING, 8,
+                  PropModeReplace, (unsigned char *)"no", 2);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 
@@ -3202,14 +3247,20 @@ void restack(Monitor *m) {
 
   drawbar(m);
   drawtab(m);
-  if (!m || !m->sel)
+
+  if (!m)
     return;
-  if (m->sel && m->sel->issticky) {
-    XLowerWindow(dpy, m->sel->win);
+
+  if (stickywin) {
+    XLowerWindow(dpy, stickywin->win);
   }
-  if (!m->sel)
-    return;
-  if (m->sel->isfloating || !m->lt[m->sellt]->arrange)
+
+  /* Also lower any other sticky windows just in case */
+  for (c = m->stack; c; c = c->snext)
+    if (c->issticky && c != stickywin && ISVISIBLE(c))
+      XLowerWindow(dpy, c->win);
+
+  if (m->sel && !m->sel->issticky && (m->sel->isfloating || !m->lt[m->sellt]->arrange))
     XRaiseWindow(dpy, m->sel->win);
   if (m->lt[m->sellt]->arrange) {
     wc.stack_mode = Below;
@@ -3220,6 +3271,9 @@ void restack(Monitor *m) {
         wc.sibling = c->win;
       }
   }
+  for (c = m->stack; c; c = c->snext)
+    if (c->isontop && !c->issticky && !c->isfullscreen && ISVISIBLE(c))
+      XRaiseWindow(dpy, c->win);
   XSync(dpy, False);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
@@ -3394,6 +3448,12 @@ void setfocus(Client *c) {
     XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
     XChangeProperty(dpy, root, netatom[NetActiveWindow], XA_WINDOW, 32,
                     PropModeReplace, (unsigned char *)&(c->win), 1);
+  } else {
+    /* InputHint false: do not focus the client window, but avoid leaving the
+     * previous X focus target so keys still go there while dwm shows sel on
+     * the neverfocus window (e.g. after arrange → focusunderpointer). */
+    XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+    XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
   }
   sendevent(c->win, wmatom[WMTakeFocus], NoEventMask, wmatom[WMTakeFocus],
             CurrentTime, 0, 0, 0);
