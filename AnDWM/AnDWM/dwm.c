@@ -3145,13 +3145,14 @@ void resizeclient(Client *c, int x, int y, int w, int h) {
 
 static Window ontopsibling(Monitor *m, Client *exclude) {
   Client *c;
+  Window last = None;
   if (!m)
     return None;
   for (c = m->stack; c; c = c->snext)
     if (c != exclude && c->isontop && !c->issticky && !c->isfullscreen &&
         ISVISIBLE(c))
-      return c->win;
-  return None;
+      last = c->win;
+  return last;
 }
 
 void resizemouse(const Arg *arg) {
@@ -3271,9 +3272,19 @@ void restack(Monitor *m) {
         wc.sibling = c->win;
       }
   }
-  for (c = m->stack; c; c = c->snext)
-    if (c->isontop && !c->issticky && !c->isfullscreen && ISVISIBLE(c))
-      XRaiseWindow(dpy, c->win);
+  Window isontop_sibling = None;
+  for (c = m->stack; c; c = c->snext) {
+    if (c->isontop && !c->issticky && !c->isfullscreen && ISVISIBLE(c)) {
+      if (isontop_sibling == None) {
+        XRaiseWindow(dpy, c->win);
+      } else {
+        wc.sibling = isontop_sibling;
+        wc.stack_mode = Below;
+        XConfigureWindow(dpy, c->win, CWSibling | CWStackMode, &wc);
+      }
+      isontop_sibling = c->win;
+    }
+  }
   XSync(dpy, False);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
