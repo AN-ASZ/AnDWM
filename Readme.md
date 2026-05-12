@@ -1,6 +1,5 @@
-# chadwm (Initial Look)
-
-[https://github.com/user-attachments/assets/d47fd978-35b7-4f38-9909-73d7a0f3478c](https://github.com/user-attachments/assets/d47fd978-35b7-4f38-9909-73d7a0f3478c)
+# AnDWM (my config) - (Initial Look)
+https://github.com/user-attachments/assets/a37d4c88-ccac-45ad-9f32-568b6a9bbbf5
 
 # Requirements
 
