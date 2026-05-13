@@ -68,7 +68,7 @@
 #define INTERSECTC(x, y, w, h, z)                                              \
   (MAX(0, MIN((x) + (w), (z)->x + (z)->w) - MAX((x), (z)->x)) *                \
    MAX(0, MIN((y) + (h), (z)->y + (z)->h) - MAX((y), (z)->y)))
-#define ISVISIBLE(C) ((C->tags & C->mon->tagset[C->mon->seltags]))
+#define ISVISIBLE(C) ((C->tags & C->mon->tagset[C->mon->seltags]) || C->issticky)
 #define HIDDEN(C) ((getstate(C->win) == IconicState))
 #define LENGTH(X) (sizeof X / sizeof X[0])
 #define MOUSEMASK (BUTTONMASK | PointerMotionMask)
@@ -265,8 +265,8 @@ static void attachstack(Client *c);
 static void buttonpress(XEvent *e);
 static void checkotherwm(void);
 static void cleanup(void);
+static void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int newtags);
 static void checkminimize(void);
-static void restore_autominimized(Monitor *m, unsigned int newtags);
 static void cleanupmon(Monitor *mon);
 static void clientmessage(XEvent *e);
 static void configure(Client *c);
@@ -437,7 +437,7 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
-static pthread_mutex_t dwm_lock = PTHREAD_MUTEX_INITIALIZER;
+
 
 #define hiddenWinStackMax 100
 static int hiddenWinStackTop = -1;
@@ -647,7 +647,6 @@ void arrangemon(Monitor *m) {
 }
 
 void attach(Client *c) {
-  pthread_mutex_lock(&dwm_lock);
   if (new_window_attach_on_end) {
     Client **tmp = &c->mon->clients;
     while (*tmp)
@@ -657,14 +656,11 @@ void attach(Client *c) {
     c->next = c->mon->clients;
     c->mon->clients = c;
   }
-  pthread_mutex_unlock(&dwm_lock);
 }
 
 void attachstack(Client *c) {
-  pthread_mutex_lock(&dwm_lock);
   c->snext = c->mon->stack;
   c->mon->stack = c;
-  pthread_mutex_unlock(&dwm_lock);
 }
 
 void buttonpress(XEvent *e) {
@@ -1075,17 +1071,17 @@ void destroynotify(XEvent *e) {
 void detach(Client *c) {
   Client **tc;
 
-  pthread_mutex_lock(&dwm_lock);
+
   for (tc = &c->mon->clients; *tc && *tc != c; tc = &(*tc)->next)
     ;
   *tc = c->next;
-  pthread_mutex_unlock(&dwm_lock);
+
 }
 
 void detachstack(Client *c) {
   Client **tc, *t;
 
-  pthread_mutex_lock(&dwm_lock);
+
   for (tc = &c->mon->stack; *tc && *tc != c; tc = &(*tc)->snext)
     ;
   *tc = c->snext;
@@ -1095,7 +1091,7 @@ void detachstack(Client *c) {
       ;
     c->mon->sel = t;
   }
-  pthread_mutex_unlock(&dwm_lock);
+
 }
 
 Monitor *dirtomon(int dir) {
@@ -2146,6 +2142,7 @@ void hide(Client *c) {
 
   setclientstate(c, IconicState);
   XUnmapWindow(dpy, c->win);
+  XSync(dpy, False);
 
   if (ISVISIBLE(c)) {
     focus(NULL);
@@ -3300,9 +3297,7 @@ void restack(Monitor *m) {
   XSync(dpy, False);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
-}
-
-void checkminimize(void) {
+}void checkminimize(void) {
   Monitor *m;
   Client *c;
   time_t now = time(NULL);
@@ -3310,43 +3305,75 @@ void checkminimize(void) {
   for (m = mons; m; m = m->next)
     for (c = m->clients; c; c = c->next)
       if (c != m->sel && !ISVISIBLE(c) && !HIDDEN(c) && !c->issticky && c->lastvisible > 0)
-        if (now - c->lastvisible >= 60) {
+        if (now - c->lastvisible >= 1) {
           hide(c);
           c->isautominimized = 1;
         }
 }
-
-void *checker_thread(void *arg) {
-  while (running) {
-    sleep(10);
-    pthread_mutex_lock(&dwm_lock);
-    XLockDisplay(dpy);
-    checkminimize();
-    XUnlockDisplay(dpy);
-    pthread_mutex_unlock(&dwm_lock);
-  }
-  return NULL;
-}
-
-void restore_autominimized(Monitor *m, unsigned int newtags) {
+void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int newtags) {
   Client *c;
+  int changed = 0;
+
+  /* Set windows leaving the view to IconicState */
   for (c = m->clients; c; c = c->next) {
-    if ((c->tags & newtags) && HIDDEN(c)) {
-      XMapWindow(dpy, c->win);
-      setclientstate(c, NormalState);
-      c->isautominimized = 0;
+    if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky && !HIDDEN(c)) {
+      setclientstate(c, IconicState);
+      c->isautominimized = 1;
+      if (c->lastvisible == 0)
+        c->lastvisible = time(NULL);
+      changed = 1;
     }
   }
+
+  /* Set windows entering the view to NormalState */
+  for (c = m->clients; c; c = c->next) {
+    if ((c->tags & newtags) && !c->issticky && HIDDEN(c)) {
+      setclientstate(c, NormalState);
+      c->isautominimized = 0;
+      c->lastvisible = 0;
+      changed = 1;
+    }
+  }
+
+  if (!changed)
+    return;
+
+  /* Wait for the X server to confirm all state changes */
   XSync(dpy, False);
+
+  int all_done, attempts = 0;
+  do {
+    all_done = 1;
+    for (c = m->clients; c; c = c->next) {
+      if ((c->tags & newtags) && !c->issticky && getstate(c->win) == IconicState) {
+        all_done = 0;
+        break;
+      }
+      if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky && getstate(c->win) == NormalState) {
+        all_done = 0;
+        break;
+      }
+    }
+    if (!all_done)
+      XSync(dpy, False);
+  } while (!all_done && ++attempts < 200);
 }
 
 void run(void) {
   XEvent ev;
+  int xfd = ConnectionNumber(dpy);
+  struct pollfd pfd = {.fd = xfd, .events = POLLIN};
+
   /* main event loop */
   XSync(dpy, False);
-  while (running && !XNextEvent(dpy, &ev)) {
-    if (handler[ev.type])
-      handler[ev.type](&ev); /* call handler */
+  while (running) {
+    poll(&pfd, 1, 1000);
+    while (XPending(dpy)) {
+      XNextEvent(dpy, &ev);
+      if (handler[ev.type])
+        handler[ev.type](&ev); /* call handler */
+    }
+    checkminimize();
   }
 }
 
@@ -3756,6 +3783,12 @@ void showhide(Client *c) {
     return;
   if (ISVISIBLE(c)) {
     c->lastvisible = 0;
+    /* If window is iconic (minimized), restore it first */
+    if (HIDDEN(c)) {
+      XMapWindow(dpy, c->win);
+      setclientstate(c, NormalState);
+      c->isautominimized = 0;
+    }
     /* show clients top down */
     XMoveWindow(dpy, c->win, c->x, c->y);
     if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) &&
@@ -3934,7 +3967,7 @@ void toggleview(const Arg *arg) {
   int i;
 
   if (newtagset) {
-    restore_autominimized(selmon, newtagset);
+    prepare_workspace_switch(selmon, selmon->tagset[selmon->seltags], newtagset);
     switchtag();
     selmon->tagset[selmon->seltags] = newtagset;
 
@@ -4044,7 +4077,7 @@ void unmapnotify(XEvent *e) {
   if ((c = wintoclient(ev->window))) {
     if (ev->send_event)
       setclientstate(c, WithdrawnState);
-    else if (getstate(c->win) != IconicState)
+    else if (ISVISIBLE(c) && getstate(c->win) != IconicState)
       unmanage(c, 0);
   } else if ((c = wintosystrayicon(ev->window))) {
     /* KLUDGE! sometimes icons occasionally unmap their windows, but do
@@ -4478,8 +4511,7 @@ void view(const Arg *arg) {
     return;
   
   newtagset = arg->ui & TAGMASK ? arg->ui & TAGMASK : selmon->pertag->prevtag;
-  restore_autominimized(selmon, newtagset);
-
+  prepare_workspace_switch(selmon, selmon->tagset[selmon->seltags], newtagset);
   switchtag();
   selmon->seltags ^= 1; /* toggle sel tagset */
   if (arg->ui & TAGMASK) {
@@ -4608,7 +4640,6 @@ void zoom(const Arg *arg) {
 }
 
 int main(int argc, char *argv[]) {
-  pthread_t tid;
   XInitThreads();
   if (argc == 2 && !strcmp("-v", argv[1]))
     die("dwm-" VERSION);
@@ -4625,7 +4656,6 @@ int main(int argc, char *argv[]) {
   }
   checkotherwm();
   setup();
-  pthread_create(&tid, NULL, checker_thread, NULL);
 #ifdef __OpenBSD__
   if (pledge("stdio rpath proc exec", NULL) == -1)
     die("pledge");
