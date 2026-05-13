@@ -359,6 +359,7 @@ static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
+static void togglefloating_noarrange(Client *c);
 static void togglefullscr(const Arg *arg);
 static void togglesticky(Client *c, int fullscreen);
 static void togglestickyclient(const Arg *arg);
@@ -367,6 +368,7 @@ static void toggleview(const Arg *arg);
 static void freeicon(Client *c);
 static void hidewin(const Arg *arg);
 static void restorewin(const Arg *arg);
+static void togglewin(const Arg *arg);
 static void unfocus(Client *c, int setfocus);
 static void unmanage(Client *c, int destroyed);
 static void unmapnotify(XEvent *e);
@@ -745,7 +747,7 @@ void buttonpress(XEvent *e) {
   } else if ((c = wintoclient(ev->window))) {
     focus(c);
     restack(selmon);
-    XAllowEvents(dpy, ReplayPointer, CurrentTime);
+    XAllowEvents(dpy, (CLEANMASK(ev->state) & MODKEY) ? AsyncPointer : ReplayPointer, CurrentTime);
     click = ClkClientWin;
   }
 
@@ -1254,6 +1256,7 @@ void dragcfact(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
+  XSync(dpy, False);
   setworkspaceanimation(selmon, 1);
   int prev_animate = animate_tiled;
   /* disable animated tiled resize while dragging to use instant resizeclient */
@@ -1458,6 +1461,7 @@ void dragmfact(const Arg *arg) {
           cursor[horizontal ? CurResizeVertArrow : CurResizeHorzArrow]->cursor,
           CurrentTime) != GrabSuccess)
     return;
+  XSync(dpy, False);
   if (m->sel)
     setworkspaceanimation(m, 1);
 
@@ -2095,7 +2099,7 @@ void grabbuttons(Client *c, int focused) {
     XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
     if (!focused)
       XGrabButton(dpy, AnyButton, AnyModifier, c->win, False, BUTTONMASK,
-                  GrabModeSync, GrabModeSync, None, None);
+                  GrabModeAsync, GrabModeSync, None, None);
     for (i = 0; i < LENGTH(buttons); i++)
       if (buttons[i].click == ClkClientWin)
         for (j = 0; j < LENGTH(modifiers); j++)
@@ -2725,9 +2729,10 @@ void movemouse(const Arg *arg) {
     return;
   if (!c->isfloating && selmon->lt[selmon->sellt]->arrange) {
     was_tiled = 1;
-    togglefloating(NULL);
+    togglefloating_noarrange(c);
   }
   restack(selmon);
+  XSync(dpy, False); // Ensure floating state and restack are processed
   ocx = c->x;
   ocy = c->y;
   lastw = c->w;
@@ -2736,6 +2741,7 @@ void movemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
+  XSync(dpy, False);
   long animation_data = 1;
   XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)&animation_data, 1);
@@ -2751,6 +2757,7 @@ void movemouse(const Arg *arg) {
   resize(c, nx, ny, c->w, c->h, 1);
   ocx = nx;
   ocy = ny;
+  XFlush(dpy);
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
     switch (ev.type) {
@@ -2798,12 +2805,15 @@ void movemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
+  XSync(dpy, False);
   long animation_data_off = 0;
   XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)&animation_data_off, 1);
   // If window was originally tiled, return to tiled after drag
   if (was_tiled && c->isfloating) {
     togglefloating(NULL);
+  } else {
+    arrange(selmon);
   }
   if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
     sendmon(c, m);
@@ -2839,6 +2849,7 @@ void placemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
+  XSync(dpy, False);
   long animation_data = 1;
   XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)&animation_data, 1);
@@ -2853,6 +2864,7 @@ void placemouse(const Arg *arg) {
   if (!getrootptr(&x, &y))
     return;
 
+  XFlush(dpy);
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
     switch (ev.type) {
@@ -3184,6 +3196,7 @@ void resizemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
+  XSync(dpy, False);
   long animation_data = 1;
   XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)&animation_data, 1);
@@ -3191,6 +3204,7 @@ void resizemouse(const Arg *arg) {
   if (!getrootptr(&mx, &my))
     return;
 
+  XFlush(dpy);
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
     switch (ev.type) {
@@ -3327,7 +3341,8 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
 
   /* Set windows entering the view to NormalState */
   for (c = m->clients; c; c = c->next) {
-    if ((c->tags & newtags) && !c->issticky && HIDDEN(c)) {
+    if ((c->tags & newtags) && !c->issticky && HIDDEN(c) && c->isautominimized) {
+      XMapWindow(dpy, c->win);
       setclientstate(c, NormalState);
       c->isautominimized = 0;
       c->lastvisible = 0;
@@ -3345,7 +3360,7 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
   do {
     all_done = 1;
     for (c = m->clients; c; c = c->next) {
-      if ((c->tags & newtags) && !c->issticky && getstate(c->win) == IconicState) {
+      if ((c->tags & newtags) && !c->issticky && getstate(c->win) == IconicState && c->isautominimized) {
         all_done = 0;
         break;
       }
@@ -3746,7 +3761,8 @@ void setup(void) {
   wa.cursor = cursor[CurNormal]->cursor;
   wa.event_mask = SubstructureRedirectMask | SubstructureNotifyMask |
                   ButtonPressMask | PointerMotionMask | EnterWindowMask |
-                  LeaveWindowMask | StructureNotifyMask | PropertyChangeMask;
+                  LeaveWindowMask | StructureNotifyMask | PropertyChangeMask |
+                  FocusChangeMask;
   XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &wa);
   XSelectInput(dpy, root, wa.event_mask);
   grabkeys();
@@ -3775,6 +3791,7 @@ void show(Client *c) {
 
   XMapWindow(dpy, c->win);
   setclientstate(c, NormalState);
+  c->isautominimized = 0;
   arrange(c->mon);
 }
 
@@ -3783,12 +3800,6 @@ void showhide(Client *c) {
     return;
   if (ISVISIBLE(c)) {
     c->lastvisible = 0;
-    /* If window is iconic (minimized), restore it first */
-    if (HIDDEN(c)) {
-      XMapWindow(dpy, c->win);
-      setclientstate(c, NormalState);
-      c->isautominimized = 0;
-    }
     /* show clients top down */
     XMoveWindow(dpy, c->win, c->x, c->y);
     if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) &&
@@ -3929,6 +3940,14 @@ void togglebar(const Arg *arg) {
   arrange(selmon);
 }
 
+void togglefloating_noarrange(Client *c) {
+  if (!c || c->isfullscreen || c->issticky)
+    return;
+  c->isfloating = !c->isfloating || c->isfixed;
+  if (c->isfloating)
+    resize(c, c->x, c->y, c->w, c->h, 0);
+}
+
 void togglefloating(const Arg *arg) {
   if (!selmon->sel)
     return;
@@ -4010,6 +4029,7 @@ void hidewin(const Arg *arg) {
   hiddenWinStack[++hiddenWinStackTop] = c;
 }
 
+
 void restorewin(const Arg *arg) {
   int i = hiddenWinStackTop;
   while (i > -1) {
@@ -4027,6 +4047,13 @@ void restorewin(const Arg *arg) {
     --i;
   }
 }
+
+
+void togglewin(const Arg *arg) {
+  if (selmon->sel) hidewin(arg);
+  else restorewin(arg);
+}
+
 
 void unfocus(Client *c, int setfocus) {
   if (!c)
