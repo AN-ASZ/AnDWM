@@ -411,6 +411,8 @@ static int th = 0; /* tab bar geometry */
 static int lrpad;  /* sum of left and right padding for text */
 static int (*xerrorxlib)(Display *, XErrorEvent *);
 static unsigned int numlockmask = 0;
+static Time last_ev_time;
+static int last_ev_x, last_ev_y;
 static void (*handler[LASTEvent])(XEvent *) = {
     [ButtonPress] = buttonpress,
     [ClientMessage] = clientmessage,
@@ -2420,64 +2422,6 @@ void togglestickyclient(const Arg *arg) {
   togglesticky(c, c->isfullscreen);
 }
 
-// Old functions
-//    void togglesticky(const Arg *arg) {
-//      // 1. Safety check: ensure we have a monitor and a client to act on
-//      if (!selmon || (!selmon->sel && !stickywin))
-//        return;
-//
-//      Client *c = stickywin ? stickywin : selmon->sel;
-//
-//      // Don't mess with fullscren windows
-//      if (c->isfullscreen)
-//        return;
-//
-//      if (!stickywin) {
-//
-//        /* MAKE STICKY */
-//        stickywin = c;
-//        c->issticky = 1;
-//        // Save state
-//        c->oldtags = c->tags;
-//        c->tags = TAGMASK; // Visible on all tags
-//        togglepicom(NULL);
-//
-//        c->wasfloating = c->isfloating;
-//        c->prevx = c->x;
-//        c->prevy = c->y;
-//        c->prevw = c->w;
-//        c->prevh = c->h;
-//
-//        c->isfloating = 1;
-//
-//        // Use monitor dimensions (m->mw/mh) instead of DisplayWidth
-//        // This prevents the window from bleeding into other monitors
-//        setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
-//
-//        // Move to bottom of stack so it doesn't cover new windows
-//        detachstack(c);
-//        attachstack(c); // Or a custom attachbottom(c) if you have one
-//
-//        XLowerWindow(dpy, c->win);
-//      } else {
-//        /* UNSTICK */
-//
-//        c->issticky = 0;
-//        c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
-//
-//        c->isfloating = c->wasfloating;
-//        togglepicom(NULL);
-//        if (c->isfloating) {
-//          resizeclient(c, c->prevx, c->prevy, c->prevw, c->prevh);
-//        }
-//
-//        stickywin = NULL;
-//      }
-//
-//      focus(NULL);
-//      arrange(selmon);
-//    }
-
 void killclient(const Arg *arg) {
   if (!selmon->sel || selmon->sel->issticky)
     return;
@@ -2739,9 +2683,8 @@ void movemouse(const Arg *arg) {
   lasth = c->h;
 
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
-                   None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
+                   None, cursor[CurMove]->cursor, last_ev_time) != GrabSuccess)
     return;
-  XSync(dpy, False);
   long animation_data = 1;
   XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)&animation_data, 1);
@@ -2767,9 +2710,8 @@ void movemouse(const Arg *arg) {
       handler[ev.type](&ev);
       break;
     case MotionNotify:
-      if ((ev.xmotion.time - lasttime) <= (1000 / 100)) // 100 FPS
-        continue;
-      lasttime = ev.xmotion.time;
+      while (XCheckTypedEvent(dpy, MotionNotify, &ev))
+        ;
 
       // If the window size changed (e.g. due to layout), keep mouse at same
       // relative position
@@ -2874,9 +2816,8 @@ void placemouse(const Arg *arg) {
       handler[ev.type](&ev);
       break;
     case MotionNotify:
-      if ((ev.xmotion.time - lasttime) <= (1000 / 60))
-        continue;
-      lasttime = ev.xmotion.time;
+      while (XCheckTypedEvent(dpy, MotionNotify, &ev))
+        ;
 
       nx = ocx + (ev.xmotion.x - x);
       ny = ocy + (ev.xmotion.y - y);
