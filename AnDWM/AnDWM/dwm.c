@@ -254,6 +254,13 @@ typedef struct {
   const char *name;
 } Launcher;
 
+typedef struct {
+  Display *dpy;
+  Window win;
+  Atom atom;
+  long animation_data;
+} AnimationPropertyArgs;
+
 /* function declarations */
 static void applyrules(Client *c);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h,
@@ -391,6 +398,7 @@ static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
 static void view(const Arg *arg);
 static void *checker_thread(void *arg);
+static void *set_animation_property_thread(void *arg);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
 static Client *wintosystrayicon(Window w);
@@ -2419,64 +2427,6 @@ void togglestickyclient(const Arg *arg) {
 
   togglesticky(c, c->isfullscreen);
 }
-
-// Old functions
-//    void togglesticky(const Arg *arg) {
-//      // 1. Safety check: ensure we have a monitor and a client to act on
-//      if (!selmon || (!selmon->sel && !stickywin))
-//        return;
-//
-//      Client *c = stickywin ? stickywin : selmon->sel;
-//
-//      // Don't mess with fullscren windows
-//      if (c->isfullscreen)
-//        return;
-//
-//      if (!stickywin) {
-//
-//        /* MAKE STICKY */
-//        stickywin = c;
-//        c->issticky = 1;
-//        // Save state
-//        c->oldtags = c->tags;
-//        c->tags = TAGMASK; // Visible on all tags
-//        togglepicom(NULL);
-//
-//        c->wasfloating = c->isfloating;
-//        c->prevx = c->x;
-//        c->prevy = c->y;
-//        c->prevw = c->w;
-//        c->prevh = c->h;
-//
-//        c->isfloating = 1;
-//
-//        // Use monitor dimensions (m->mw/mh) instead of DisplayWidth
-//        // This prevents the window from bleeding into other monitors
-//        setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
-//
-//        // Move to bottom of stack so it doesn't cover new windows
-//        detachstack(c);
-//        attachstack(c); // Or a custom attachbottom(c) if you have one
-//
-//        XLowerWindow(dpy, c->win);
-//      } else {
-//        /* UNSTICK */
-//
-//        c->issticky = 0;
-//        c->tags = c->oldtags ? c->oldtags : selmon->tagset[selmon->seltags];
-//
-//        c->isfloating = c->wasfloating;
-//        togglepicom(NULL);
-//        if (c->isfloating) {
-//          resizeclient(c, c->prevx, c->prevy, c->prevw, c->prevh);
-//        }
-//
-//        stickywin = NULL;
-//      }
-//
-//      focus(NULL);
-//      arrange(selmon);
-//    }
 
 void killclient(const Arg *arg) {
   if (!selmon->sel || selmon->sel->issticky)
