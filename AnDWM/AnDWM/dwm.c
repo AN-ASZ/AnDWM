@@ -254,6 +254,12 @@ typedef struct {
   const char *name;
 } Launcher;
 
+typedef struct {
+  char *display_name;
+  Window win;
+  long animation_data;
+} AnimationPropertyArgs;
+
 /* function declarations */
 static void applyrules(Client *c);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h,
@@ -325,7 +331,6 @@ static void removesystrayicon(Client *i);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
 static void resizeclient(Client *c, int x, int y, int w, int h);
-static void resizeclient_animated(Client *c, int x, int y, int w, int h);
 static void resizemouse(const Arg *arg);
 static void resizerequest(XEvent *e);
 static void restack(Monitor *m);
@@ -336,6 +341,7 @@ static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2,
 static void sendmon(Client *c, Monitor *m);
 static void setclientstate(Client *c, long state);
 static void setclienttagprop(Client *c);
+static void setnoanimation_async(Client *c, long val);
 static void setworkspaceanimation(Monitor *m, int val);
 static void setcurrentdesktop(void);
 static void setdesktopnames(void);
@@ -390,7 +396,7 @@ static void updateicon(Client *c);
 static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
 static void view(const Arg *arg);
-static void *checker_thread(void *arg);
+static void *set_animation_property_thread(void *arg);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
 static Client *wintosystrayicon(Window w);
@@ -412,7 +418,6 @@ static int lrpad;  /* sum of left and right padding for text */
 static int (*xerrorxlib)(Display *, XErrorEvent *);
 static unsigned int numlockmask = 0;
 static Time last_ev_time;
-static int last_ev_x, last_ev_y;
 static void (*handler[LASTEvent])(XEvent *) = {
     [ButtonPress] = buttonpress,
     [ClientMessage] = clientmessage,
@@ -669,6 +674,7 @@ void attachstack(Client *c) {
 
 void buttonpress(XEvent *e) {
   unsigned int i, x, click;
+  int clientbinding;
   int loop;
   Arg arg = {0};
   Client *c;
@@ -747,10 +753,23 @@ void buttonpress(XEvent *e) {
         click = ClkTabPrev + loop;
     }
   } else if ((c = wintoclient(ev->window))) {
+    click = ClkClientWin;
+    clientbinding = 0;
+    for (i = 0; i < LENGTH(buttons); i++)
+      if (buttons[i].click == ClkClientWin &&
+          buttons[i].button == ev->button &&
+          CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state)) {
+        clientbinding = 1;
+        break;
+      }
+    XAllowEvents(dpy, clientbinding ? AsyncPointer : ReplayPointer, CurrentTime);
+    if (clientbinding) {
+      selmon = c->mon;
+      selmon->sel = c;
+      goto execute_handler;
+    }
     focus(c);
     restack(selmon);
-    XAllowEvents(dpy, (CLEANMASK(ev->state) & MODKEY) ? AsyncPointer : ReplayPointer, CurrentTime);
-    click = ClkClientWin;
   }
 
 execute_handler:
@@ -2198,31 +2217,6 @@ int countwindows(void) {
   return count;
 }
 
-static const char *getclientclass(Client *c) {
-  static char class[256]; // static buffer
-  XClassHint ch = {NULL, NULL};
-
-  if (!c || !c->win)
-    return NULL;
-
-  if (XGetClassHint(dpy, c->win, &ch)) {
-    if (ch.res_class) {
-      strncpy(class, ch.res_class, sizeof(class) - 1);
-      class[sizeof(class) - 1] = '\0';
-    } else {
-      class[0] = '\0';
-    }
-
-    if (ch.res_name)
-      XFree(ch.res_name);
-    if (ch.res_class)
-      XFree(ch.res_class);
-
-    return class;
-  }
-  return NULL;
-}
-
 int picom_state = 0;
 const char *class_name; // Renamed to avoid confusion with C++ 'class' keyword
 static Display *cached_dpy = NULL;
@@ -2537,8 +2531,8 @@ void manage(Window w, XWindowAttributes *wa) {
     unfocus(selmon->sel, 0);
   c->mon->sel = c;
   updatetitle(c);
-  if (c->name && (strstr(c->name, "Picture in picture") ||
-                  strstr(c->name, "Picture-in-Picture")))
+  if (strstr(c->name, "Picture in picture") ||
+      strstr(c->name, "Picture-in-Picture"))
     togglesticky(c, 0);
   else
     arrange(c->mon);
@@ -2657,14 +2651,63 @@ void moveorplace(const Arg *arg) {
     placemouse(arg);
 }
 
+static void *
+set_animation_property_thread(void *arg)
+{
+  AnimationPropertyArgs *args = arg;
+  Display *thread_dpy;
+  Atom atom;
+
+  if ((thread_dpy = XOpenDisplay(args->display_name))) {
+    atom = XInternAtom(thread_dpy, "_NO_ANIMATION", False);
+    XChangeProperty(thread_dpy, args->win, atom, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char *)&args->animation_data, 1);
+    XCloseDisplay(thread_dpy);
+  }
+
+  free(args->display_name);
+  free(args);
+  return NULL;
+}
+
+static void
+setnoanimation_async(Client *c, long val)
+{
+  AnimationPropertyArgs *args;
+  pthread_t thread;
+  const char *display_name;
+
+  if (!c || !c->win)
+    return;
+
+  if (!(args = malloc(sizeof *args)))
+    return;
+
+  display_name = DisplayString(dpy);
+  args->display_name = display_name ? strdup(display_name) : NULL;
+  args->win = c->win;
+  args->animation_data = val;
+
+  if (display_name && !args->display_name) {
+    free(args);
+    return;
+  }
+
+  if (pthread_create(&thread, NULL, set_animation_property_thread, args) == 0)
+    pthread_detach(thread);
+  else {
+    free(args->display_name);
+    free(args);
+  }
+}
+
 void movemouse(const Arg *arg) {
-  int x, y, ocx, ocy, nx, ny;
+  int x, y, nx, ny;
   int rel_x, rel_y; // offset from window corner to mouse
   int lastw = 0, lasth = 0;
   Client *c;
   Monitor *m;
   XEvent ev;
-  Time lasttime = 0;
   int was_tiled = 0;
 
   if (!(c = selmon->sel))
@@ -2677,17 +2720,13 @@ void movemouse(const Arg *arg) {
   }
   restack(selmon);
   XSync(dpy, False); // Ensure floating state and restack are processed
-  ocx = c->x;
-  ocy = c->y;
   lastw = c->w;
   lasth = c->h;
 
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, last_ev_time) != GrabSuccess)
     return;
-  long animation_data = 1;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char *)&animation_data, 1);
+  setnoanimation_async(c, 1);
   if (!getrootptr(&x, &y))
     return;
   /* Calculate offset from window top-left to mouse position */
@@ -2698,8 +2737,6 @@ void movemouse(const Arg *arg) {
   nx = x - rel_x;
   ny = y - rel_y;
   resize(c, nx, ny, c->w, c->h, 1);
-  ocx = nx;
-  ocy = ny;
   XFlush(dpy);
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
@@ -2748,9 +2785,7 @@ void movemouse(const Arg *arg) {
 
   XUngrabPointer(dpy, CurrentTime);
   XSync(dpy, False);
-  long animation_data_off = 0;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char *)&animation_data_off, 1);
+  setnoanimation_async(c, 0);
   // If window was originally tiled, return to tiled after drag
   if (was_tiled && c->isfloating) {
     togglefloating(NULL);
@@ -2776,7 +2811,6 @@ void placemouse(const Arg *arg) {
   Monitor *m;
   XEvent ev;
   XWindowAttributes wa;
-  Time lasttime = 0;
   int attachmode, prevattachmode;
   attachmode = prevattachmode = -1;
 
@@ -2792,9 +2826,7 @@ void placemouse(const Arg *arg) {
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
   XSync(dpy, False);
-  long animation_data = 1;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char *)&animation_data, 1);
+  setnoanimation_async(c, 1);
 
   c->isfloating = 0;
   c->beingmoved = 1;
@@ -2887,9 +2919,7 @@ void placemouse(const Arg *arg) {
     }
   } while (ev.type != ButtonRelease);
   XUngrabPointer(dpy, CurrentTime);
-  long animation_data_off = 0;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char *)&animation_data_off, 1);
+  setnoanimation_async(c, 0);
 
   if ((m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1)) && m != c->mon) {
     detach(c);
@@ -3010,42 +3040,6 @@ void removesystrayicon(Client *i) {
   free(i);
 }
 
-void resizeclient_animated(Client *c, int x, int y, int w, int h)
-{
-	if (!c)
-		return;
-
-	const float steps[] = { 0.60f, 0.85f, 0.95f };
-	const int nsteps = sizeof(steps) / sizeof(steps[0]);
-
-	int sx = c->x;
-	int sy = c->y;
-	int sw = c->w;
-	int sh = c->h;
-
-	for (int i = 0; i < nsteps; i++) {
-		float t = steps[i];
-
-		int nx = sx + (int)((x - sx) * t);
-		int ny = sy + (int)((y - sy) * t);
-		int nw = sw + (int)((w - sw) * t);
-		int nh = sh + (int)((h - sh) * t);
-
-		XMoveResizeWindow(dpy, c->win, nx, ny, nw, nh);
-		XSync(dpy, False);
-
-		usleep(12000);
-	}
-
-	c->x = x;
-	c->y = y;
-	c->w = w;
-	c->h = h;
-
-	XMoveResizeWindow(dpy, c->win, x, y, w, h);
-	XSync(dpy, False);
-}
-
 void resize(Client *c, int x, int y, int w, int h, int interact) {
   if (!c)
     return;
@@ -3138,9 +3132,7 @@ void resizemouse(const Arg *arg) {
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
   XSync(dpy, False);
-  long animation_data = 1;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char *)&animation_data, 1);
+  setnoanimation_async(c, 1);
 
   if (!getrootptr(&mx, &my))
     return;
@@ -3181,9 +3173,7 @@ void resizemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  long animation_data_off = 0;
-  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char *)&animation_data_off, 1);
+  setnoanimation_async(c, 0);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 
@@ -3318,18 +3308,20 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
 void run(void) {
   XEvent ev;
   int xfd = ConnectionNumber(dpy);
+  int n;
   struct pollfd pfd = {.fd = xfd, .events = POLLIN};
 
   /* main event loop */
   XSync(dpy, False);
   while (running) {
-    poll(&pfd, 1, 1000);
+    n = poll(&pfd, 1, 1000);
     while (XPending(dpy)) {
       XNextEvent(dpy, &ev);
       if (handler[ev.type])
         handler[ev.type](&ev); /* call handler */
     }
-    checkminimize();
+    if (n == 0)
+      checkminimize();
   }
 }
 
