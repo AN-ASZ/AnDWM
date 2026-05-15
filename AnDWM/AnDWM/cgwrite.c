@@ -13,6 +13,7 @@
  */
 
 #include <errno.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -25,6 +26,7 @@
 #define CGROUP_PATH_MAX 512
 #define BOOST_SIZE "4294967296" /* 4 GiB */
 #define DRM_RESOURCE "0"        /* GPU minor node index */
+#define CGWRITE_LOG_PATH "/tmp/dwm-cgwrite-errors.log"
 
 /* -------------------------------------------------------------------------- */
 /* Logging */
@@ -34,7 +36,7 @@ static void cgwrite_log_error(const char *fmt, ...) {
   va_list ap;
   char msg[1024];
   char logpath[CGROUP_PATH_MAX];
-  const char *user;
+  struct passwd *pw;
   FILE *f;
   time_t t;
   struct tm tm;
@@ -43,11 +45,17 @@ static void cgwrite_log_error(const char *fmt, ...) {
   if (!fmt)
     return;
 
-  user = getenv("USER");
-  if (user && user[0])
-    snprintf(logpath, sizeof(logpath), "/home/%s/dwm-cgwrite-errors.log", user);
+  pw = getpwuid(getuid());
+  if (pw && pw->pw_dir && pw->pw_dir[0])
+    snprintf(logpath, sizeof(logpath), "%s/dwm-cgwrite-errors.log",
+             pw->pw_dir);
   else
-    snprintf(logpath, sizeof(logpath), "/tmp/dwm-cgwrite-errors.log");
+    snprintf(logpath, sizeof(logpath), "%s", CGWRITE_LOG_PATH);
+
+  if (strcmp(logpath, CGWRITE_LOG_PATH) != 0) {
+    unlink(logpath);
+    symlink(CGWRITE_LOG_PATH, logpath);
+  }
 
   va_start(ap, fmt);
   vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -140,7 +148,7 @@ static void write_cgroup_file(const char *path, const char *value) {
  */
 static void enable_dmem_subtree(const char *cgroup_path) {
   char path[CGROUP_PATH_MAX];
-  char subtree_file[CGROUP_PATH_MAX];
+  char subtree_file[CGROUP_PATH_MAX + sizeof("/cgroup.subtree_control")];
   char buf[256];
   FILE *f;
   char *slash;
