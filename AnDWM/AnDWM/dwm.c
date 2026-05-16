@@ -135,6 +135,8 @@ enum {
   NetActiveWindow,
   NetWMWindowType,
   NetWMWindowTypeDialog,
+  NetWMWindowOpacity,
+  NetWMBypassCompositor,
   NetClientList,
   NetClientInfo,
   NetDesktopNames,
@@ -347,6 +349,9 @@ static void setcurrentdesktop(void);
 static void setdesktopnames(void);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
+static int haswindowproperty(Client *c, Atom prop);
+static void setwindowopacity(Client *c);
+static void clearwindowopacity(Client *c);
 static void setlayout(const Arg *arg);
 static void setcfact(const Arg *arg);
 static void setmfact(const Arg *arg);
@@ -2223,9 +2228,46 @@ static Display *cached_dpy = NULL;
 static Window cached_win = 0;
 static int cached_valid = 0;
 
+int haswindowproperty(Client *c, Atom prop) {
+  Atom actual;
+  int format;
+  unsigned long n, extra;
+  unsigned char *data = NULL;
+  int exists = 0;
+
+  if (!c || !c->win || prop == None)
+    return 0;
+
+  if (XGetWindowProperty(dpy, c->win, prop, 0L, 0L, False, AnyPropertyType,
+                         &actual, &format, &n, &extra, &data) == Success)
+    exists = actual != None;
+
+  if (data)
+    XFree(data);
+
+  return exists;
+}
+
+void setwindowopacity(Client *c) {
+  unsigned long value = 0xffffffffUL;
+
+  if (!c || !c->win || netatom[NetWMWindowOpacity] == None ||
+      haswindowproperty(c, netatom[NetWMBypassCompositor]))
+    return;
+
+  XChangeProperty(dpy, c->win, netatom[NetWMWindowOpacity], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&value, 1);
+}
+
+void clearwindowopacity(Client *c) {
+  if (!c || !c->win || netatom[NetWMWindowOpacity] == None)
+    return;
+
+  XDeleteProperty(dpy, c->win, netatom[NetWMWindowOpacity]);
+}
+
 void togglepicom(const Arg *arg) {
-  Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
-  if (opacity == None)
+  if (netatom[NetWMWindowOpacity] == None)
     return;
 
   if (picom_state == 0) {
@@ -2238,10 +2280,7 @@ void togglepicom(const Arg *arg) {
     cached_win = c->win;
     cached_valid = 1;
 
-    unsigned long value = 0xffffffff; // fully opaque
-
-    XChangeProperty(cached_dpy, cached_win, opacity, XA_CARDINAL, 32,
-                    PropModeReplace, (unsigned char *)&value, 1);
+    setwindowopacity(c);
 
     picom_state = 1;
 
@@ -2255,7 +2294,7 @@ void togglepicom(const Arg *arg) {
       return;
     }
 
-    XDeleteProperty(cached_dpy, cached_win, opacity);
+    XDeleteProperty(cached_dpy, cached_win, netatom[NetWMWindowOpacity]);
 
     // Reset cache (important!)
     cached_valid = 0;
@@ -2329,6 +2368,7 @@ void togglesticky(Client *c, int fullscreen) {
     /* Remove EWMH Fullscreen state */
     XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
+    clearwindowopacity(stickywin);
 
     detachstack(stickywin);
     attachstack(stickywin);
@@ -2359,6 +2399,7 @@ void togglesticky(Client *c, int fullscreen) {
     XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)&netatom[NetWMFullscreen],
                     1);
+    setwindowopacity(stickywin);
 
     /* Resize to fill the monitor */
     resizeclient(stickywin, stickywin->mon->mx - borderpx, stickywin->mon->my - borderpx,
@@ -2371,6 +2412,7 @@ void togglesticky(Client *c, int fullscreen) {
     /* 1. Reset EWMH first */
     XChangeProperty(dpy, stickywin->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
+    clearwindowopacity(stickywin);
 
     /* 2. Restore the floating status */
     stickywin->isfloating = stickywin->wasfloating;
@@ -3510,10 +3552,12 @@ void setfullscreen(Client *c, int fullscreen) {
     c->bw = 0;
     c->isfloating = 1;
     resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
+    setwindowopacity(c);
     XRaiseWindow(dpy, c->win);
   } else if (!fullscreen && c->isfullscreen) {
     XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
+    clearwindowopacity(c);
     c->isfullscreen = 0;
     c->isfloating = c->oldstate;
     c->bw = c->oldbw;
@@ -3640,6 +3684,10 @@ void setup(void) {
   netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
   netatom[NetWMWindowTypeDialog] =
       XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+  netatom[NetWMWindowOpacity] =
+      XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  netatom[NetWMBypassCompositor] =
+      XInternAtom(dpy, "_NET_WM_BYPASS_COMPOSITOR", False);
   netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
   xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
   xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
@@ -4002,6 +4050,9 @@ void unfocus(Client *c, int setfocus) {
 void unmanage(Client *c, int destroyed) {
   Monitor *m = c->mon;
   XWindowChanges wc;
+
+  if (!destroyed && (c->isfullscreen || c->issticky))
+    clearwindowopacity(c);
 
   /* cleanup sticky metadata if the removed client was sticky */
   if (c == stickywin) {

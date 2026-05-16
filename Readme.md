@@ -1,118 +1,191 @@
-# AnDWM (my config) - (Initial Look)
+# AnDWM
+
+AnDWM is my customized dwm setup. It includes the dwm source, helper scripts,
+rofi themes, wallpaper, compositor config, status bar utilities, and an
+optional Ly display manager setup.
+
 https://github.com/user-attachments/assets/a37d4c88-ccac-45ad-9f32-568b6a9bbbf5
 
-# Requirements
+## Supported Install
 
-* dash (shell)
-* imlib2
-* xsetroot package (status2d uses this to add colors to the dwm bar)
-* JetBrainsMono Nerd Font or any Nerd Font (make sure to set it in `config.def.h`)
-* Make sure to match your terminal theme with chadwm's theme, such as Nord, OneDark, etc.
+The included installer is written for Arch Linux and Arch-based systems. It uses
+`pacman`, installs `yay` when needed, installs required packages, copies the
+config to `~/.config/AnDWM`, builds helper utilities, installs the window
+manager, and creates an XSession entry named `AnDWM`.
 
-## Other Requirements
+Read `install.sh` before running it. The script uses `sudo`, installs packages,
+creates files under `/usr/share`, and can optionally install and enable Ly.
 
-* picom
-* feh
-* acpi
-* rofi
+## Requirements
 
-# Install
+Core requirements:
+
+* Arch Linux or an Arch-based distro
+* `sudo`
+* `git`
+* `base-devel`
+* `xorg-server`
+* `xorg-xinit`
+* X11 development libraries
+* `imlib2`
+* `libx11`
+* `libxft`
+* `libxinerama`
+* `libxrender`
+* `libxfixes`
+* `libxdamage`
+* `libxcomposite`
+* `fontconfig`
+
+Runtime tools used by this config:
+
+* `kitty`
+* `picom`
+* `feh`
+* `rofi`
+* `rofi-greenclip`
+* `wired`
+* `dex`
+* `playerctl`
+* `polkit-gnome`
+* `xorg-xsetroot`
+* `xorg-xrandr`
+* `fish`
+* `starship`
+* Nerd fonts, including Iosevka or Hack
+
+The installer handles these packages for Arch-based systems.
+
+## Install
+
+Clone this repository and run the installer:
 
 ```sh
-git clone https://github.com/siduck/chadwm --depth 1 ~/.config/chadwm
-cd ~/.config/chadwm/
-mv eww ~/.config
-cd chadwm
-sudo make install
+git clone https://github.com/AN-ASZ/AnDWM.git
+cd AnDWM
+chmod +x install.sh
+./install.sh
 ```
 
-> Note: Make all scripts executable using `chmod +x`.
+During installation, you can choose whether to install Ly and disable other
+display managers.
 
-# Run chadwm
+After installation, reboot and select `AnDWM` from your display manager.
 
-## With startx
+## What The Installer Does
 
-```sh
-startx ~/.config/chadwm/scripts/run.sh
-```
+`install.sh` performs these steps:
 
-## With sx
+* Updates the system with `pacman -Syu`
+* Installs `yay` if it is missing
+* Installs required `pacman` and AUR packages
+* Copies `AnDWM` to `~/.config/AnDWM`
+* Installs fonts and refreshes the font cache
+* Optionally installs and enables Ly
+* Builds helper utilities in `~/.config/AnDWM/scripts/bin`
+* Builds and installs dwm as `/usr/local/bin/AnDWM`
+* Installs `cgwrite` as `/usr/local/bin/cgwrite`
+* Creates `/usr/share/xsessions/AnDWM.desktop`
 
-```sh
-sx sh ~/.config/chadwm/scripts/run.sh
-```
+## Run With A Display Manager
 
-You can create an alias for convenience:
-
-```sh
-alias chadwm='startx ~/.config/chadwm/scripts/run.sh'
-```
-
-## With a Display Manager
-
-Create a desktop entry (replace `user` with your username):
-
-```sh
-sudo touch /usr/share/xsessions/chadwm.desktop
-```
+The installer creates this XSession entry:
 
 ```ini
 [Desktop Entry]
-Name=chadwm
-Comment=Beautifully customized dwm
-Exec=/home/user/.config/chadwm/scripts/run.sh
+Name=AnDWM
+Comment=Modern ChadWM fork
+Exec=/home/YOUR_USER/.config/AnDWM/scripts/sh/run.sh
 Type=Application
 ```
 
-# Recompile
+Select `AnDWM` at your login screen.
 
-You need to recompile dwm after every change you make to the source code.
+## Run With startx
+
+You can also start the session manually:
 
 ```sh
-cd ~/.config/chadwm/chadwm
-rm config.h
+startx ~/.config/AnDWM/scripts/sh/run.sh
+```
+
+## Manual Build
+
+If you only want to build and install the window manager:
+
+```sh
+cd AnDWM/AnDWM
+sudo make clean
 sudo make install
 ```
 
-# Change Themes
+This installs:
 
-* Bar: edit `bar.sh` (line 9) and `config.def.h` (line 35)
-* Rofi: edit `config.rasi` (line 15)
+* `/usr/local/bin/AnDWM`
+* `/usr/local/bin/cgwrite`
+* `/usr/local/share/man/man1/dwm.1`
 
-# Eww
+## Recompile After Changes
 
-All eww-related stuff has been removed.
+Recompile after changing the dwm source or `config.h`:
 
-# Credits
+```sh
+cd ~/.config/AnDWM/AnDWM
+sudo make clean
+sudo make install
+```
 
-* Huge thanks to [eProTaLT83](https://www.reddit.com/user/eProTaLT83). I wanted certain features in dwm like tabbed monocle mode, tag previews, etc., and he implemented my ideas and created patches for me. I can't even count how many times he has helped me :v
-* @fitrh helped with the [colorful tag patch](https://github.com/fitrh/dwm/issues/1)
-* [6gk](https://github.com/6gk/fet.sh) — eww's pure POSIX fetch functions were taken from here
-* [mafetch](https://github.com/fikriomar16/mafetch) — a modified version was used as the fetch shown in the screenshots
+Then restart the session.
 
-# Patches
+## Session Startup
 
-* [systray](https://gitlab.com/-/snippets/2184056)
-* systray iconsize
-* barpadding
-* bottomstack
-* cfacts
-* dragmfact
-* dragcfact (taken from [bakkeby's build](https://github.com/bakkeby/dwm-flexipatch))
-* fibonacci
-* gaplessgrid
-* horizgrid
-* movestack
-* vanity gaps
-* colorful tags
-* statuspadding
-* status2d
-* underline tags
-* notitle
-* winicon
-* [preserveonrestart](https://github.com/PhyTech-R0/dwm-phyOS/blob/master/patches/dwm-6.3-patches/dwm-preserveonrestart-6.3.diff) — prevents all windows from being moved to tag 1 after restarting dwm
-* shiftview
+The session script is:
 
-# Original Repository
+```sh
+~/.config/AnDWM/scripts/sh/run.sh
+```
 
-[https://github.com/siduck/chadwm.git](https://github.com/siduck/chadwm.git)
+It loads `.Xresources`, sets the wallpaper with `feh`, starts `wired`, starts
+the custom bar, starts `picom`, starts `greenclip`, configures keyboard layouts,
+starts the polkit agent, runs XDG autostart entries, and finally executes
+`AnDWM`.
+
+## Customization
+
+Useful files:
+
+* DWM config: `~/.config/AnDWM/AnDWM/config.h`
+* DWM source: `~/.config/AnDWM/AnDWM/dwm.c`
+* Build settings: `~/.config/AnDWM/AnDWM/config.mk`
+* Startup script: `~/.config/AnDWM/scripts/sh/run.sh`
+* Picom config: `~/.config/AnDWM/scripts/picom.conf`
+* Rofi config: `~/.config/AnDWM/rofi/config.rasi`
+* Wallpapers: `~/.config/AnDWM/Wallpaper`
+* Bar themes: `~/.config/AnDWM/scripts/bar_themes`
+
+## Uninstall
+
+Remove the installed binaries:
+
+```sh
+cd ~/.config/AnDWM/AnDWM
+sudo make uninstall
+```
+
+Optional cleanup:
+
+```sh
+rm -rf ~/.config/AnDWM
+sudo rm -f /usr/share/xsessions/AnDWM.desktop
+```
+
+## Credits
+
+This setup is based on chadwm and dwm.
+
+Original chadwm repository:
+
+https://github.com/siduck/chadwm.git
+
+Thanks to the original patch authors and maintainers of dwm, chadwm, and the
+tools used by this setup.
