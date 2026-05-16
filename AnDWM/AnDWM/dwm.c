@@ -1899,7 +1899,17 @@ void write_fullscreen(int value) {
   fclose(f);
 }
 
-bool fullscreen_st = false;
+static bool fullscreen_st = false;
+
+static void updatefullscreenstatus(Client *c) {
+  bool isfullscreen = c && c->isfullscreen && !c->issticky;
+
+  if (fullscreen_st == isfullscreen)
+    return;
+
+  write_fullscreen(isfullscreen);
+  fullscreen_st = isfullscreen;
+}
 
 void focus(Client *c) {
   if (!c || (!ISVISIBLE(c) || HIDDEN(c)))
@@ -1923,13 +1933,7 @@ void focus(Client *c) {
   }
   selmon->sel = c;
 
-if(c && c->isfullscreen && !fullscreen_st) {
-    write_fullscreen(1);
-    fullscreen_st = 1;
-  } else if (fullscreen_st) {
-    write_fullscreen(0);
-    fullscreen_st = 0;
-  }
+  updatefullscreenstatus(c);
 
   drawbars();
   drawtabs();
@@ -3567,13 +3571,10 @@ void setfullscreen(Client *c, int fullscreen) {
     c->h = c->oldh;
     resizeclient(c, c->x, c->y, c->w, c->h);
     arrange(c->mon);
-    
-  if (fullscreen_st) {
-    write_fullscreen(0);
-    fullscreen_st = 0;
   }
 
-  }
+  if (c == selmon->sel || fullscreen_st)
+    updatefullscreenstatus(selmon->sel);
 }
 
 void setlayout(const Arg *arg) {
@@ -4053,6 +4054,9 @@ void unmanage(Client *c, int destroyed) {
 
   if (!destroyed && (c->isfullscreen || c->issticky))
     clearwindowopacity(c);
+
+  if (c == selmon->sel || (c->isfullscreen && fullscreen_st))
+    updatefullscreenstatus(NULL);
 
   /* cleanup sticky metadata if the removed client was sticky */
   if (c == stickywin) {
