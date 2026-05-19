@@ -201,10 +201,7 @@ cd "$HOME/.config/AnDWM/scripts"
 
 mkdir -p bin
 
-g++ -Ofast -march=native cpp/bar.cpp \
-    -o bin/bar \
-    -lX11 \
-    -lXfixes
+ g++ -Ofast -march=native cpp/bar.cpp -o bin/bar -lX11 -lXfixes -lXext -lsdbus-c++
 
 g++ cpp/bat.cpp \
     -o bin/bat \

@@ -1,7 +1,7 @@
 /*
  * cgwrite — setuid root helper for GPU VRAM cgroup boost
  *
- * Usage: cgwrite <pid>
+ * Usage: cgwrite <pid> [drm_resource boost_size]
  *
  * Install:
  *   sudo cp cgwrite /usr/local/bin/cgwrite
@@ -9,10 +9,12 @@
  *   sudo chmod 4755 /usr/local/bin/cgwrite
  *
  * dwm calls this from cgwrite_focused() via execv, passing the focused
- * window's PID. No root privilege is needed in dwm itself.
+ * window's PID plus the DRM resource and boost size detected at DWM startup.
+ * No root privilege is needed in dwm itself.
  */
 
 #include <errno.h>
+#include <limits.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -24,8 +26,8 @@
 
 #define CGROUP_ROOT "/sys/fs/cgroup"
 #define CGROUP_PATH_MAX 512
-#define BOOST_SIZE "4294967296" /* 4 GiB */
-#define DRM_RESOURCE "0"        /* GPU minor node index */
+#define DEFAULT_BOOST_SIZE "4294967296" /* 4 GiB */
+#define DEFAULT_DRM_RESOURCE 0          /* GPU minor node index */
 #define CGWRITE_LOG_PATH "/tmp/dwm-cgwrite-errors.log"
 
 /* -------------------------------------------------------------------------- */
@@ -199,21 +201,84 @@ static void enable_dmem_subtree(const char *cgroup_path) {
 /* Main */
 /* -------------------------------------------------------------------------- */
 
+static int parse_pid_arg(const char *arg, pid_t *pid) {
+  char *end;
+  long value;
+
+  if (!arg || !pid)
+    return 0;
+
+  errno = 0;
+  value = strtol(arg, &end, 10);
+  if (errno != 0 || !end || *end != '\0' || value <= 0 || value > INT_MAX)
+    return 0;
+
+  *pid = (pid_t)value;
+  return 1;
+}
+
+static int parse_drm_resource_arg(const char *arg, int *resource) {
+  char *end;
+  long value;
+
+  if (!arg || !resource)
+    return 0;
+
+  errno = 0;
+  value = strtol(arg, &end, 10);
+  if (errno != 0 || !end || *end != '\0' || value < 0 || value > 255)
+    return 0;
+
+  *resource = (int)value;
+  return 1;
+}
+
+static int parse_boost_size_arg(const char *arg, char *boost,
+                                size_t boost_size) {
+  char *end;
+  unsigned long long value;
+
+  if (!arg || !boost || boost_size == 0)
+    return 0;
+
+  errno = 0;
+  value = strtoull(arg, &end, 10);
+  if (errno != 0 || !end || *end != '\0' || value == 0)
+    return 0;
+
+  snprintf(boost, boost_size, "%llu", value);
+  return 1;
+}
+
 int main(int argc, char *argv[]) {
   pid_t pid;
   char cgroup_full[CGROUP_PATH_MAX];
   char dmem_low_path[CGROUP_PATH_MAX];
   char boost_value[128];
+  char boost_size[64];
+  int drm_resource;
 
-  if (argc != 2) {
-    fprintf(stderr, "usage: cgwrite <pid>\n");
+  if (argc != 2 && argc != 4) {
+    fprintf(stderr, "usage: cgwrite <pid> [drm_resource boost_size]\n");
     return 1;
   }
 
-  pid = (pid_t)atoi(argv[1]);
-  if (pid <= 0) {
+  if (!parse_pid_arg(argv[1], &pid)) {
     cgwrite_log_error("cgwrite: invalid pid argument: %s", argv[1]);
     return 1;
+  }
+
+  drm_resource = DEFAULT_DRM_RESOURCE;
+  snprintf(boost_size, sizeof(boost_size), "%s", DEFAULT_BOOST_SIZE);
+  if (argc == 4) {
+    if (!parse_drm_resource_arg(argv[2], &drm_resource)) {
+      cgwrite_log_error("cgwrite: invalid drm resource argument: %s", argv[2]);
+      return 1;
+    }
+    if (!parse_boost_size_arg(argv[3], boost_size, sizeof(boost_size))) {
+      cgwrite_log_error("cgwrite: invalid boost size argument: %s", argv[3]);
+      return 1;
+    }
   }
 
   /* Verify process exists */
@@ -248,8 +313,8 @@ int main(int argc, char *argv[]) {
 
   /* Write VRAM boost to dmem.low */
   snprintf(dmem_low_path, sizeof(dmem_low_path), "%s/dmem.low", cgroup_full);
-  snprintf(boost_value, sizeof(boost_value), "%s %s\n", DRM_RESOURCE,
-           BOOST_SIZE);
+  snprintf(boost_value, sizeof(boost_value), "%d %s\n", drm_resource,
+           boost_size);
 
   write_cgroup_file(dmem_low_path, boost_value);
 

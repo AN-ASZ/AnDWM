@@ -569,9 +569,14 @@ string player_info(const string &app) {
         }
       }
     }
+    static string prevTitle;
     string TITLE = metaMap.count("xesam:title")
                        ? metaMap["xesam:title"].get<string>()
                        : "Unknown Track";
+    if (TITLE != prevTitle) {
+      g_scroll_index = 0;
+      prevTitle = TITLE;
+    }
     string TEXT = "[" + formatArtist(rawArtist) + "]" + "  " + TITLE + " ";
     TEXT = escape_quotes(TEXT);
 
