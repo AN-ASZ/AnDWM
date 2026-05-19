@@ -26,6 +26,8 @@
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
+#include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <locale.h>
@@ -132,6 +134,7 @@ enum {
   NetSystemTrayOrientation,
   NetSystemTrayOrientationHorz,
   NetWMFullscreen,
+  NetWMStateHidden,
   NetActiveWindow,
   NetWMWindowType,
   NetWMWindowTypeDialog,
@@ -1899,7 +1902,17 @@ void write_fullscreen(int value) {
   fclose(f);
 }
 
-bool fullscreen_st = false;
+static bool fullscreen_st = false;
+
+static void updatefullscreenstatus(Client *c) {
+  bool isfullscreen = c && c->isfullscreen && !c->issticky;
+
+  if (fullscreen_st == isfullscreen)
+    return;
+
+  write_fullscreen(isfullscreen);
+  fullscreen_st = isfullscreen;
+}
 
 void focus(Client *c) {
   if (!c || (!ISVISIBLE(c) || HIDDEN(c)))
@@ -1923,13 +1936,7 @@ void focus(Client *c) {
   }
   selmon->sel = c;
 
-if(c && c->isfullscreen && !fullscreen_st) {
-    write_fullscreen(1);
-    fullscreen_st = 1;
-  } else if (fullscreen_st) {
-    write_fullscreen(0);
-    fullscreen_st = 0;
-  }
+  updatefullscreenstatus(c);
 
   drawbars();
   drawtabs();
@@ -2810,6 +2817,9 @@ void movemouse(const Arg *arg) {
 
       nx = ev.xmotion.x - rel_x;
       ny = ev.xmotion.y - rel_y;
+       m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1);
+      if (m && m != selmon)
+        selmon = m;
       if (abs(selmon->wx - nx) < snap)
         nx = selmon->wx;
       else if (abs((selmon->wx + selmon->ww) - (nx + WIDTH(c))) < snap)
@@ -2828,16 +2838,23 @@ void movemouse(const Arg *arg) {
   XUngrabPointer(dpy, CurrentTime);
   XSync(dpy, False);
   setnoanimation_async(c, 0);
+  /*
+   * Decide the destination monitor from the mouse cursor on release.
+   * Check BEFORE arrange to prevent applysizehints() from clamping
+   * the window position to the wrong monitor's window area.
+   */
+  if ((m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1)) &&
+      m != c->mon) {
+    sendmon(c, m);
+    selmon = m;
+    focus(NULL);
+  }
+
   // If window was originally tiled, return to tiled after drag
   if (was_tiled && c->isfloating) {
     togglefloating(NULL);
   } else {
-    arrange(selmon);
-  }
-  if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
-    sendmon(c, m);
-    selmon = m;
-    focus(NULL);
+    arrange(c->mon);
   }
 }
 
@@ -3219,7 +3236,8 @@ void resizemouse(const Arg *arg) {
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 
-  if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
+  if ((m = recttomon(c->x + WIDTH(c) / 2, c->y + HEIGHT(c) / 2, 1, 1)) &&
+      m != c->mon) {
     sendmon(c, m);
     selmon = m;
     focus(NULL);
@@ -3409,6 +3427,28 @@ void sendmon(Client *c, Monitor *m) {
 
 void setclientstate(Client *c, long state) {
   long data[] = {state, None};
+  Atom atoms[32];
+  int natoms = 0;
+  Atom da;
+  int di;
+  unsigned long nitems, extra;
+  unsigned char *p = NULL;
+
+  if (XGetWindowProperty(dpy, c->win, netatom[NetWMState], 0L, 32, False,
+                         XA_ATOM, &da, &di, &nitems, &extra,
+                         &p) == Success && p) {
+    Atom *existing = (Atom *)p;
+    for (unsigned long i = 0; i < nitems && natoms < 32; i++)
+      if (existing[i] != netatom[NetWMStateHidden])
+        atoms[natoms++] = existing[i];
+    XFree(p);
+  }
+
+  if (state == IconicState)
+    atoms[natoms++] = netatom[NetWMStateHidden];
+
+  XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
+                  PropModeReplace, (unsigned char *)atoms, natoms);
 
   XChangeProperty(dpy, c->win, wmatom[WMState], wmatom[WMState], 32,
                   PropModeReplace, (unsigned char *)data, 2);
@@ -3470,6 +3510,210 @@ void setnumdesktops(void) {
  * subtree_control recursively, and writes to dmem.low
  */
 #define CGWRITE_BIN "/usr/local/bin/cgwrite"
+#define CGWRITE_DRM_SYSFS "/sys/class/drm"
+#define CGWRITE_DEFAULT_BOOST_SIZE "4294967296" /* 4 GiB */
+#define CGWRITE_DEFAULT_DRM_RESOURCE 0
+
+static int cgwrite_drm_resource = CGWRITE_DEFAULT_DRM_RESOURCE;
+static char cgwrite_boost_size[64] = CGWRITE_DEFAULT_BOOST_SIZE;
+
+static int cgwrite_read_uint64_file(const char *path,
+                                    unsigned long long *value) {
+  FILE *f;
+  unsigned long long v;
+
+  if (!path || !value)
+    return 0;
+
+  f = fopen(path, "r");
+  if (!f)
+    return 0;
+
+  if (fscanf(f, "%llu", &v) != 1) {
+    fclose(f);
+    return 0;
+  }
+
+  fclose(f);
+  *value = v;
+  return 1;
+}
+
+static int cgwrite_read_text_file(const char *path, char *buf,
+                                  size_t bufsize) {
+  FILE *f;
+
+  if (!path || !buf || bufsize == 0)
+    return 0;
+
+  f = fopen(path, "r");
+  if (!f)
+    return 0;
+
+  if (!fgets(buf, bufsize, f)) {
+    fclose(f);
+    return 0;
+  }
+
+  fclose(f);
+  return 1;
+}
+
+static int cgwrite_parse_card_name(const char *name, int *card,
+                                   const char **suffix) {
+  const char *p;
+  char *end;
+  long n;
+
+  if (!name || strncmp(name, "card", 4) != 0 ||
+      !isdigit((unsigned char)name[4]))
+    return 0;
+
+  p = name + 4;
+  errno = 0;
+  n = strtol(p, &end, 10);
+  if (errno != 0 || n < 0 || n > 255)
+    return 0;
+
+  if (card)
+    *card = (int)n;
+  if (suffix)
+    *suffix = end;
+
+  return 1;
+}
+
+static int cgwrite_find_connected_display_card(void) {
+  DIR *dir;
+  struct dirent *ent;
+  int best = -1;
+
+  dir = opendir(CGWRITE_DRM_SYSFS);
+  if (!dir)
+    return -1;
+
+  while ((ent = readdir(dir))) {
+    const char *suffix;
+    char status_path[512];
+    char status[64];
+    int card;
+
+    if (!cgwrite_parse_card_name(ent->d_name, &card, &suffix) || !suffix ||
+        suffix[0] != '-')
+      continue;
+
+    snprintf(status_path, sizeof(status_path), "%s/%s/status",
+             CGWRITE_DRM_SYSFS, ent->d_name);
+    if (!cgwrite_read_text_file(status_path, status, sizeof(status)))
+      continue;
+
+    if (strncmp(status, "connected", strlen("connected")) == 0 &&
+        (best < 0 || card < best))
+      best = card;
+  }
+
+  closedir(dir);
+  return best;
+}
+
+static int cgwrite_find_boot_vga_card(void) {
+  DIR *dir;
+  struct dirent *ent;
+  int best = -1;
+
+  dir = opendir(CGWRITE_DRM_SYSFS);
+  if (!dir)
+    return -1;
+
+  while ((ent = readdir(dir))) {
+    const char *suffix;
+    char boot_vga_path[512];
+    unsigned long long boot_vga;
+    int card;
+
+    if (!cgwrite_parse_card_name(ent->d_name, &card, &suffix) || !suffix ||
+        suffix[0] != '\0')
+      continue;
+
+    snprintf(boot_vga_path, sizeof(boot_vga_path), "%s/%s/device/boot_vga",
+             CGWRITE_DRM_SYSFS, ent->d_name);
+    if (cgwrite_read_uint64_file(boot_vga_path, &boot_vga) && boot_vga == 1 &&
+        (best < 0 || card < best))
+      best = card;
+  }
+
+  closedir(dir);
+  return best;
+}
+
+static int cgwrite_find_first_card(void) {
+  DIR *dir;
+  struct dirent *ent;
+  int best = -1;
+
+  dir = opendir(CGWRITE_DRM_SYSFS);
+  if (!dir)
+    return -1;
+
+  while ((ent = readdir(dir))) {
+    const char *suffix;
+    int card;
+
+    if (!cgwrite_parse_card_name(ent->d_name, &card, &suffix) || !suffix ||
+        suffix[0] != '\0')
+      continue;
+
+    if (best < 0 || card < best)
+      best = card;
+  }
+
+  closedir(dir);
+  return best;
+}
+
+static int cgwrite_read_card_vram_total(int card, unsigned long long *bytes) {
+  static const char *files[] = {
+      "mem_info_vram_total",
+      "mem_info_vis_vram_total",
+      "local_memory_size",
+  };
+  char path[512];
+  size_t i;
+
+  if (card < 0 || !bytes)
+    return 0;
+
+  for (i = 0; i < LENGTH(files); i++) {
+    snprintf(path, sizeof(path), "%s/card%d/device/%s", CGWRITE_DRM_SYSFS,
+             card, files[i]);
+    if (cgwrite_read_uint64_file(path, bytes) && *bytes > 0)
+      return 1;
+  }
+
+  return 0;
+}
+
+static void cgwrite_detect_drm_boost(void) {
+  unsigned long long bytes;
+  int card;
+
+  cgwrite_drm_resource = CGWRITE_DEFAULT_DRM_RESOURCE;
+  snprintf(cgwrite_boost_size, sizeof(cgwrite_boost_size), "%s",
+           CGWRITE_DEFAULT_BOOST_SIZE);
+
+  card = cgwrite_find_connected_display_card();
+  if (card < 0)
+    card = cgwrite_find_boot_vga_card();
+  if (card < 0)
+    card = cgwrite_find_first_card();
+
+  if (card < 0)
+    return;
+
+  cgwrite_drm_resource = card;
+  if (cgwrite_read_card_vram_total(card, &bytes))
+    snprintf(cgwrite_boost_size, sizeof(cgwrite_boost_size), "%llu", bytes);
+}
 
 pid_t getwindowpid(Window win) {
   Atom atom, type;
@@ -3494,7 +3738,9 @@ pid_t getwindowpid(Window win) {
 void cgwrite_focused(Window win) {
   pid_t pid, child;
   char pid_str[32];
-  char *argv[] = {CGWRITE_BIN, pid_str, NULL};
+  char drm_resource_str[16];
+  char *argv[] = {CGWRITE_BIN, pid_str, drm_resource_str, cgwrite_boost_size,
+                  NULL};
 
   if (!win || win == None)
     return;
@@ -3504,6 +3750,8 @@ void cgwrite_focused(Window win) {
     return;
 
   snprintf(pid_str, sizeof(pid_str), "%d", (int)pid);
+  snprintf(drm_resource_str, sizeof(drm_resource_str), "%d",
+           cgwrite_drm_resource);
 
   child = fork();
   if (child < 0) {
@@ -3567,13 +3815,10 @@ void setfullscreen(Client *c, int fullscreen) {
     c->h = c->oldh;
     resizeclient(c, c->x, c->y, c->w, c->h);
     arrange(c->mon);
-    
-  if (fullscreen_st) {
-    write_fullscreen(0);
-    fullscreen_st = 0;
   }
 
-  }
+  if (c == selmon->sel || fullscreen_st)
+    updatefullscreenstatus(selmon->sel);
 }
 
 void setlayout(const Arg *arg) {
@@ -3648,6 +3893,8 @@ void setup(void) {
   while (waitpid(-1, NULL, WNOHANG) > 0)
     ;
 
+  cgwrite_detect_drm_boost();
+
   /* init screen */
   screen = DefaultScreen(dpy);
   sw = DisplayWidth(dpy, screen);
@@ -3681,6 +3928,8 @@ void setup(void) {
   netatom[NetWMCheck] = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
   netatom[NetWMFullscreen] =
       XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+  netatom[NetWMStateHidden] =
+      XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
   netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
   netatom[NetWMWindowTypeDialog] =
       XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
@@ -4053,6 +4302,9 @@ void unmanage(Client *c, int destroyed) {
 
   if (!destroyed && (c->isfullscreen || c->issticky))
     clearwindowopacity(c);
+
+  if (c == selmon->sel || (c->isfullscreen && fullscreen_st))
+    updatefullscreenstatus(NULL);
 
   /* cleanup sticky metadata if the removed client was sticky */
   if (c == stickywin) {
