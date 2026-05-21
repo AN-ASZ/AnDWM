@@ -223,6 +223,7 @@ struct Client {
   Window win;
   time_t lastvisible;
   int isautominimized;
+  int fshidden;     /* hidden by fullscreen window */
 };
 
 typedef struct {
@@ -353,6 +354,8 @@ static void setdesktopnames(void);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
 static int haswindowproperty(Client *c, Atom prop);
+static int get_bypass_compositor_value(Client *c);
+static int window_has_transparency(Client *c);
 static void setwindowopacity(Client *c);
 static void clearwindowopacity(Client *c);
 static void setlayout(const Arg *arg);
@@ -2255,6 +2258,50 @@ int haswindowproperty(Client *c, Atom prop) {
   return exists;
 }
 
+int get_bypass_compositor_value(Client *c) {
+  Atom actual;
+  int format;
+  unsigned long n, extra;
+  unsigned char *data = NULL;
+
+  if (!c || !c->win || netatom[NetWMBypassCompositor] == None)
+    return 0;
+
+  if (XGetWindowProperty(dpy, c->win, netatom[NetWMBypassCompositor],
+                          0L, 1L, False, XA_CARDINAL,
+                          &actual, &format, &n, &extra, &data) == Success
+      && actual != None && data) {
+    unsigned long val = *(unsigned long *)data;
+    XFree(data);
+    return val;
+  }
+  if (data)
+    XFree(data);
+  return 0;
+}
+
+int window_has_transparency(Client *c) {
+  if (!c || !c->win)
+    return 0;
+  if (get_bypass_compositor_value(c) == 2)
+    return 1;
+  if (transparent_fullscreen_classes[0]) {
+    XClassHint ch = {NULL, NULL};
+    if (XGetClassHint(dpy, c->win, &ch) && ch.res_class) {
+      for (int i = 0; transparent_fullscreen_classes[i]; i++) {
+        if (strcmp(ch.res_class, transparent_fullscreen_classes[i]) == 0) {
+          XFree(ch.res_class);
+          if (ch.res_name) XFree(ch.res_name);
+          return 1;
+        }
+      }
+    }
+    if (ch.res_class) XFree(ch.res_class);
+    if (ch.res_name) XFree(ch.res_name);
+  }
+  return 0;
+}
+
 void setwindowopacity(Client *c) {
   unsigned long value = 0xffffffffUL;
 
@@ -2379,6 +2426,7 @@ void togglesticky(Client *c, int fullscreen) {
 
     detachstack(stickywin);
     attachstack(stickywin);
+    stickywin->fshidden = 0;
     XRaiseWindow(dpy, stickywin->win);
 
     stickywin = NULL;
@@ -2439,6 +2487,7 @@ void togglesticky(Client *c, int fullscreen) {
 
     detachstack(stickywin);
     attachstack(stickywin);
+    stickywin->fshidden = 0;
     XRaiseWindow(dpy, stickywin->win);
 
     stickywin = NULL;
@@ -3802,6 +3851,20 @@ void setfullscreen(Client *c, int fullscreen) {
     resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
     setwindowopacity(c);
     XRaiseWindow(dpy, c->win);
+
+    /* hide all lower windows; preserve sticky windows if window has transparency */
+    int has_transparency = window_has_transparency(c);
+    Client *it;
+    for (it = c->mon->stack; it; it = it->snext) {
+      if (it == c || !ISVISIBLE(it) || HIDDEN(it))
+        continue;
+      if (has_transparency && stickywin && it->issticky)
+        continue;
+      setclientstate(it, IconicState);
+      XUnmapWindow(dpy, it->win);
+      it->fshidden = 1;
+      it->isautominimized = 0;
+    }
   } else if (!fullscreen && c->isfullscreen) {
     XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
@@ -3814,6 +3877,17 @@ void setfullscreen(Client *c, int fullscreen) {
     c->w = c->oldw;
     c->h = c->oldh;
     resizeclient(c, c->x, c->y, c->w, c->h);
+
+    /* restore windows hidden by fullscreen */
+    Client *it;
+    for (it = c->mon->stack; it; it = it->snext) {
+      if (it->fshidden) {
+        it->fshidden = 0;
+        XMapWindow(dpy, it->win);
+        setclientstate(it, NormalState);
+        it->isautominimized = 0;
+      }
+    }
     arrange(c->mon);
   }
 
@@ -4022,6 +4096,7 @@ void show(Client *c) {
   XMapWindow(dpy, c->win);
   setclientstate(c, NormalState);
   c->isautominimized = 0;
+  c->fshidden = 0;
   arrange(c->mon);
 }
 
@@ -4328,6 +4403,20 @@ void unmanage(Client *c, int destroyed) {
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
+
+  /* if the dying window was fullscreen, restore any clients it hid */
+  if (c->isfullscreen) {
+    Client *it;
+    for (it = m->stack; it; it = it->snext) {
+      if (it->fshidden) {
+        it->fshidden = 0;
+        XMapWindow(dpy, it->win);
+        setclientstate(it, NormalState);
+        it->isautominimized = 0;
+      }
+    }
+  }
+
   free(c);
   updateclientlist();
   arrange(m);
