@@ -28,6 +28,7 @@
 #include <X11/keysym.h>
 #include <ctype.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
 #include <locale.h>
@@ -53,6 +54,21 @@
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
 #include <stdbool.h>
+
+#define FIFO_PATH "/tmp/dwm-pipn.fifo"
+static void
+sendn(const char *msg)
+{
+	int fd = open(FIFO_PATH, O_WRONLY | O_NONBLOCK);
+	if (fd >= 0) {
+		write(fd, msg, strlen(msg));
+		write(fd, "\n", 1);
+		close(fd);
+	}
+}
+
+
+
 
 /* tile animation config */
 #define TILE_ANIM_STEPS 2   /* more = smoother, slower */
@@ -224,6 +240,7 @@ struct Client {
   time_t lastvisible;
   int isautominimized;
   int fshidden;     /* hidden by fullscreen window */
+  Client *pipparent; /* parent browser window that spawned this PIP */
 };
 
 typedef struct {
@@ -267,6 +284,7 @@ typedef struct {
 } AnimationPropertyArgs;
 
 /* function declarations */
+static Client *find_pipparent(Client *c);
 static void applyrules(Client *c);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h,
                           int interact);
@@ -2515,7 +2533,7 @@ void togglestickyclient(const Arg *arg) {
 }
 
 void killclient(const Arg *arg) {
-  if (!selmon->sel || selmon->sel->issticky)
+  if (!selmon->sel)
     return;
   if (!sendevent(selmon->sel->win, wmatom[WMDelete], NoEventMask,
                  wmatom[WMDelete], CurrentTime, 0, 0, 0)) {
@@ -2630,8 +2648,10 @@ void manage(Window w, XWindowAttributes *wa) {
   c->mon->sel = c;
   updatetitle(c);
   if (strstr(c->name, "Picture in picture") ||
-      strstr(c->name, "Picture-in-Picture"))
+      strstr(c->name, "Picture-in-Picture")) {
+    c->pipparent = find_pipparent(c);
     togglesticky(c, 0);
+  }
   else
     arrange(c->mon);
 
@@ -3776,12 +3796,143 @@ pid_t getwindowpid(Window win) {
     return -1;
 
   if (XGetWindowProperty(dpy, win, atom, 0L, 1L, False, XA_CARDINAL, &type,
-                         &format, &nitems, &bytes, &prop) == Success &&
+                          &format, &nitems, &bytes, &prop) == Success &&
       prop != NULL) {
     pid = *(pid_t *)prop;
     XFree(prop);
   }
   return pid;
+}
+
+static Window get_win_prop(Window w, const char *atom_name) {
+  Atom atom, type;
+  int format;
+  unsigned long nitems, bytes;
+  unsigned char *prop;
+  Window result = None;
+
+  atom = XInternAtom(dpy, atom_name, False);
+  if (atom == None)
+    return None;
+
+  if (XGetWindowProperty(dpy, w, atom, 0L, 1L, False, XA_WINDOW, &type,
+                          &format, &nitems, &bytes, &prop) == Success &&
+      prop != NULL) {
+    result = *(Window *)prop;
+    XFree(prop);
+  }
+  return result;
+}
+
+static unsigned long get_user_time(Window win) {
+  Atom atom, type;
+  int format;
+  unsigned long nitems, bytes;
+  unsigned char *prop;
+  unsigned long time_val = 0;
+
+  atom = XInternAtom(dpy, "_NET_WM_USER_TIME", False);
+  if (atom == None)
+    return 0;
+
+  if (XGetWindowProperty(dpy, win, atom, 0L, 1L, False, XA_CARDINAL, &type,
+                          &format, &nitems, &bytes, &prop) == Success &&
+      prop != NULL) {
+    time_val = *(unsigned long *)prop;
+    XFree(prop);
+  }
+  return time_val;
+}
+
+static int is_browser_window(Client *c) {
+  if (!c->name[0] || c->name[0] == '\0')
+    return 0;
+  if (strstr(c->name, "Firefox") || strstr(c->name, "firefox"))
+    return 1;
+  if (strstr(c->name, "Zen Browser") || strstr(c->name, "zen-browser"))
+    return 1;
+  if (strstr(c->name, "chrome") || strstr(c->name, "Chrome") ||
+      strstr(c->name, "Chromium") || strstr(c->name, "Chromium-browser") ||
+      strstr(c->name, "brave") || strstr(c->name, "Microsoft Edge") ||
+      strstr(c->name, "microsoft-edge") || strstr(c->name, "edge") ||
+      strstr(c->name, "vivaldi") || strstr(c->name, "opera") ||
+      strstr(c->name, "waterfox") || strstr(c->name, "librewolf") ||
+      strstr(c->name, "pale-moon") || strstr(c->name, "org.mozilla"))
+    return 1;
+  return 0;
+}
+
+Client *find_pipparent(Client *c) {
+  if (!c || c->win == None)
+    return NULL;
+
+  Monitor *m;
+  Client *it;
+  unsigned long highest_time = 0;
+  Client *best_parent = NULL;
+
+  Window pip_user_time_window = get_win_prop(c->win, "_NET_WM_USER_TIME_WINDOW");
+  if (pip_user_time_window != None && pip_user_time_window != root) {
+    Window parent = pip_user_time_window;
+    Window child;
+    int depth = 0;
+
+    while (parent && parent != root && depth < 20) {
+      Client *client = wintoclient(parent);
+      if (client) {
+        pid_t client_pid = getwindowpid(client->win);
+        pid_t pip_pid = getwindowpid(c->win);
+        if (client_pid == pip_pid && client_pid > 0 && client != c) {
+          return client;
+        }
+      }
+
+      if (XGetTransientForHint(dpy, parent, &child) && child == pip_user_time_window) {
+        Window dummy;
+        Window *children = NULL;
+        unsigned int nchildren = 0;
+
+        if (XQueryTree(dpy, parent, &dummy, &parent, &children, &nchildren)) {
+          if (children)
+            XFree(children);
+          if (!parent || parent == root)
+            break;
+        } else {
+          break;
+        }
+      } else {
+        parent = None;
+      }
+      depth++;
+    }
+  }
+
+  pid_t pip_pid = getwindowpid(c->win);
+  if (pip_pid <= 0)
+    return NULL;
+
+  for (m = mons; m; m = m->next) {
+    for (it = m->clients; it; it = it->next) {
+      if (!it->win || it == c || it->pipparent)
+        continue;
+
+      pid_t client_pid = getwindowpid(it->win);
+      if (client_pid != pip_pid)
+        continue;
+
+      if (is_browser_window(it)) {
+
+        unsigned long current_time = get_user_time(it->win);
+
+        if (current_time > highest_time) {
+          highest_time = current_time;
+          best_parent = it;
+        }
+      }
+    }
+  }
+
+  return best_parent;
 }
 
 void cgwrite_focused(Window win) {
@@ -4268,7 +4419,17 @@ void togglefloating(const Arg *arg) {
 void togglefullscr(const Arg *arg) {
   if (selmon->sel)
     setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
+
+  /* MAY BE NEXT TIME ( need someone to implement this )
+    Add auto close pip when enter fullscreen and reopen when exit fullscreen
+    - 1st run close pip if exists when entering fullscreen
+      - save piprante to reopen when exiting fullscreen
+    - 2nd run reopen pip if it was closed when exiting fullscreen
+      - add fake focus to parent to trigger focus event, this will fake browser to allow spawn pip again
+  */
+
 }
+
 
 void toggletag(const Arg *arg) {
   unsigned int newtags;
@@ -4415,6 +4576,11 @@ void unmanage(Client *c, int destroyed) {
         it->isautominimized = 0;
       }
     }
+  }
+
+  if (c->pipparent) {
+    c->pipparent->pipparent = NULL;
+    c->pipparent = NULL;
   }
 
   free(c);

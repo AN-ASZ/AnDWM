@@ -48,4 +48,16 @@ uninstall:
 		${DESTDIR}${PREFIX}/bin/cgwrite\
 		${DESTDIR}${MANPREFIX}/man1/dwm.1
 
-.PHONY: all clean dist install uninstall
+# bridge: pipn native messaging host
+BRIDGE_SRC  = ../scripts/pipn_bridge.c
+BRIDGE_OUT  = $(HOME)/.config/AnDWM/scripts/bin/pipn-nativemessage
+NATIVEMSG   = $(HOME)/Projects/lib-native-messaging
+NATIVEMSG_H = $(NATIVEMSG)/include
+
+pipn-bridge: $(BRIDGE_OUT)
+
+$(BRIDGE_OUT): $(BRIDGE_SRC)
+	$(CC) -o $@ $(BRIDGE_SRC) $(NATIVEMSG)/src/nativemsg.c \
+		-lpthread -I$(NATIVEMSG_H) $(CFLAGS)
+
+.PHONY: all clean dist install uninstall pipn-bridge
