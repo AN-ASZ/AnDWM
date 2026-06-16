@@ -4417,8 +4417,18 @@ void togglefloating(const Arg *arg) {
 }
 
 void togglefullscr(const Arg *arg) {
-  if (selmon->sel)
-    setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
+  if (!selmon->sel)
+    return;
+
+  XEvent e = {0};
+  e.type = ClientMessage;
+  e.xclient.window = selmon->sel->win;
+  e.xclient.message_type = netatom[NetWMState];
+  e.xclient.format = 32;
+  e.xclient.data.l[0] = 2;  /* _NET_WM_STATE_TOGGLE */
+  e.xclient.data.l[1] = netatom[NetWMFullscreen];
+  e.xclient.data.l[2] = 0;
+  XSendEvent(dpy, root, False, SubstructureRedirectMask, &e);
 
   /* MAY BE NEXT TIME ( need someone to implement this )
     Add auto close pip when enter fullscreen and reopen when exit fullscreen
@@ -4427,7 +4437,6 @@ void togglefullscr(const Arg *arg) {
     - 2nd run reopen pip if it was closed when exiting fullscreen
       - add fake focus to parent to trigger focus event, this will fake browser to allow spawn pip again
   */
-
 }
 
 
