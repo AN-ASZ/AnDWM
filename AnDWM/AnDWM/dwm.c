@@ -120,6 +120,10 @@ enum {
   CurMove,
   CurResizeHorzArrow,
   CurResizeVertArrow,
+  CurTopLeft,
+  CurTopRight,
+  CurBottomLeft,
+  CurBottomRight,
   CurLast
 }; /* cursor */
 enum {
@@ -222,6 +226,7 @@ struct Client {
   unsigned int tags;
   int isfixed, iscentered, isfloating, isurgent, neverfocus, oldstate,
       isfullscreen;
+  int bypass_controlled;
   int isontop;
   int issticky;     /* sticky to background */
   int stickeystate; /* previous state before being sticky */
@@ -937,6 +942,13 @@ void clientmessage(XEvent *e) {
       resizebarwin(selmon);
       updatesystray();
       setclientstate(c, NormalState);
+    }
+    return;
+  }
+  if (cme->message_type == netatom[NetCurrentDesktop]) {
+    if (cme->data.l[0] >= 0 && (unsigned long)cme->data.l[0] < LENGTH(tags)) {
+      Arg a = {.ui = 1 << cme->data.l[0]};
+      view(&a);
     }
     return;
   }
@@ -2298,6 +2310,15 @@ int get_bypass_compositor_value(Client *c) {
   return 0;
 }
 
+void
+set_bypass_compositor(Client *c, unsigned long val)
+{
+  if (!c || !c->win || netatom[NetWMBypassCompositor] == None)
+    return;
+  XChangeProperty(dpy, c->win, netatom[NetWMBypassCompositor], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&val, 1);
+}
+
 int window_has_transparency(Client *c) {
   if (!c || !c->win)
     return 0;
@@ -2574,6 +2595,7 @@ void manage(Window w, XWindowAttributes *wa) {
   c->h = c->oldh = wa->height;
   c->oldbw = wa->border_width;
   c->cfact = 1.0;
+  c->bypass_controlled = (get_bypass_compositor_value(c) != 2);
 
   updateicon(c);
   updatetitle(c);
@@ -2654,6 +2676,9 @@ void manage(Window w, XWindowAttributes *wa) {
   }
   else
     arrange(c->mon);
+
+  if (c->bypass_controlled && !c->isfullscreen)
+    set_bypass_compositor(c, 0);
 
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
@@ -3244,6 +3269,8 @@ void resizemouse(const Arg *arg) {
   Time lasttime = 0;
   int ocx, ocy, ocw, och, nw, nh;
   int mx, my;
+  int last_quadrant = -1;
+  int quadrant;
 
   if (!(c = selmon->sel) || c->isfullscreen || c->issticky)
     return;
@@ -3278,6 +3305,21 @@ void resizemouse(const Arg *arg) {
       if ((ev.xmotion.time - lasttime) <= (1000 / 60))
         continue;
       lasttime = ev.xmotion.time;
+
+      /* determine resize quadrant based on initial grab point */
+      if (mx < ocx + ocw / 2 && my < ocy + och / 2)
+        quadrant = CurTopLeft;
+      else if (mx >= ocx + ocw / 2 && my < ocy + och / 2)
+        quadrant = CurTopRight;
+      else if (mx < ocx + ocw / 2 && my >= ocy + och / 2)
+        quadrant = CurBottomLeft;
+      else
+        quadrant = CurBottomRight;
+
+      if (quadrant != last_quadrant) {
+        XChangeActivePointerGrab(dpy, MOUSEMASK, cursor[quadrant]->cursor, CurrentTime);
+        last_quadrant = quadrant;
+      }
 
       /* width/height based on mouse movement */
       nw = MAX(ocw + (ev.xmotion.x - mx) * (mx < ocx + ocw / 2 ? -1 : 1),
@@ -4001,6 +4043,8 @@ void setfullscreen(Client *c, int fullscreen) {
     c->isfloating = 1;
     resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
     setwindowopacity(c);
+    if (c->bypass_controlled)
+      set_bypass_compositor(c, 1);
     XRaiseWindow(dpy, c->win);
 
     /* hide all lower windows; preserve sticky windows if window has transparency */
@@ -4020,6 +4064,8 @@ void setfullscreen(Client *c, int fullscreen) {
     XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
     clearwindowopacity(c);
+    if (c->bypass_controlled)
+      set_bypass_compositor(c, 0);
     c->isfullscreen = 0;
     c->isfloating = c->oldstate;
     c->bw = c->oldbw;
@@ -4175,11 +4221,15 @@ void setup(void) {
   netatom[NetClientInfo] = XInternAtom(dpy, "_NET_CLIENT_INFO", False);
   netatom[NetNoAnimation] = XInternAtom(dpy, "_NO_ANIMATION", False);
   /* init cursors */
-  cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
-  cursor[CurResize] = drw_cur_create(drw, XC_sizing);
-  cursor[CurMove] = drw_cur_create(drw, XC_fleur);
-  cursor[CurResizeHorzArrow] = drw_cur_create(drw, XC_sb_h_double_arrow);
-  cursor[CurResizeVertArrow] = drw_cur_create(drw, XC_sb_v_double_arrow);
+  cursor[CurNormal] = drw_cur_create(drw, "left_ptr");
+  cursor[CurResize] = drw_cur_create(drw, "sizing");
+  cursor[CurMove] = drw_cur_create(drw, "fleur");
+  cursor[CurResizeHorzArrow] = drw_cur_create(drw, "sb_h_double_arrow");
+  cursor[CurResizeVertArrow] = drw_cur_create(drw, "sb_v_double_arrow");
+  cursor[CurTopLeft] = drw_cur_create(drw, "top_left_corner");
+  cursor[CurTopRight] = drw_cur_create(drw, "top_right_corner");
+  cursor[CurBottomLeft] = drw_cur_create(drw, "bottom_left_corner");
+  cursor[CurBottomRight] = drw_cur_create(drw, "bottom_right_corner");
   /* init appearance */
   scheme = ecalloc(LENGTH(colors) + 1, sizeof(Clr *));
   scheme[LENGTH(colors)] = drw_scm_create(drw, colors[0], 3);
