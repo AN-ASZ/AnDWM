@@ -4308,7 +4308,7 @@ void showhide(Client *c) {
   if (ISVISIBLE(c)) {
     c->lastvisible = 0;
     /* show clients top down */
-    if (HIDDEN(c)) {
+    if (HIDDEN(c) && c->isautominimized) {
       XMapWindow(dpy, c->win);
       setclientstate(c, NormalState);
       c->isautominimized = 0;
