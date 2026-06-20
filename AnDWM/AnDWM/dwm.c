@@ -413,7 +413,7 @@ static void unfocus(Client *c, int setfocus);
 static void unmanage(Client *c, int destroyed);
 static void unmapnotify(XEvent *e);
 static void updatenumberofdesktops(void);
-static void updatecurrentdesktop(void);
+static void updatecurrentdesktop(unsigned int tagset);
 static void updatebarpos(Monitor *m);
 static void updatebars(void);
 static void updatepreview(void);
@@ -3434,6 +3434,8 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
   for (c = m->clients; c; c = c->next) {
     if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky && !HIDDEN(c)) {
       setclientstate(c, IconicState);
+      XUnmapWindow(dpy, c->win);
+      XSync(dpy, False);
       c->isautominimized = 1;
       if (c->lastvisible == 0)
         c->lastvisible = time(NULL);
@@ -3456,7 +3458,6 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
     return;
 
   /* Wait for the X server to confirm all state changes */
-  XSync(dpy, False);
 
   int all_done, attempts = 0;
   do {
@@ -4244,7 +4245,7 @@ void setup(void) {
   updatebarpos(selmon);
   updatepreview();
   updatenumberofdesktops();
-  updatecurrentdesktop();
+  updatecurrentdesktop(selmon->tagset[selmon->seltags]);
   /* supporting window for NetWMCheck */
   wmcheckwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
   XChangeProperty(dpy, wmcheckwin, netatom[NetWMCheck], XA_WINDOW, 32,
@@ -4307,6 +4308,11 @@ void showhide(Client *c) {
   if (ISVISIBLE(c)) {
     c->lastvisible = 0;
     /* show clients top down */
+    if (HIDDEN(c)) {
+      XMapWindow(dpy, c->win);
+      setclientstate(c, NormalState);
+      c->isautominimized = 0;
+    }
     XMoveWindow(dpy, c->win, c->x, c->y);
     if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) &&
         !c->isfullscreen)
@@ -4317,7 +4323,8 @@ void showhide(Client *c) {
       c->lastvisible = time(NULL);
     /* hide clients bottom up */
     showhide(c->snext);
-    XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
+    setclientstate(c, IconicState);
+    XUnmapWindow(dpy, c->win);
   }
 }
 
@@ -4500,7 +4507,7 @@ void toggletag(const Arg *arg) {
     selmon->sel->tags = newtags;
     setclienttagprop(selmon->sel);
     focus(NULL);
-    updatecurrentdesktop();
+    updatecurrentdesktop(selmon->tagset[selmon->seltags]);
     arrange(selmon);
   }
 }
@@ -4540,7 +4547,7 @@ void toggleview(const Arg *arg) {
     if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
       togglebar(NULL);
 
-    updatecurrentdesktop();
+    updatecurrentdesktop(selmon->tagset[selmon->seltags]);
     focus(NULL);
     arrange(selmon);
   }
@@ -4772,12 +4779,12 @@ void updatenumberofdesktops(void) {
                   PropModeReplace, (unsigned char *)data, 1);
 }
 
-void updatecurrentdesktop(void) {
+void updatecurrentdesktop(unsigned int tagset) {
   long data[] = {0};
   unsigned int i, mask = 1;
 
   for (i = 0; i < LENGTH(tags); i++, mask <<= 1) {
-    if (selmon->tagset[selmon->seltags] & mask) {
+    if (tagset & mask) {
       data[0] = i;
       break;
     }
@@ -5088,9 +5095,12 @@ void view(const Arg *arg) {
     return;
   
   newtagset = arg->ui & TAGMASK ? arg->ui & TAGMASK : selmon->pertag->prevtag;
+  updatecurrentdesktop(newtagset);
+  XSync(dpy,False);
   prepare_workspace_switch(selmon, selmon->tagset[selmon->seltags], newtagset);
   switchtag();
   selmon->seltags ^= 1; /* toggle sel tagset */
+
   if (arg->ui & TAGMASK) {
     selmon->pertag->prevtag = selmon->pertag->curtag;
     selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
@@ -5119,7 +5129,6 @@ void view(const Arg *arg) {
   if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
     togglebar(NULL);
 
-  updatecurrentdesktop();
   focus(NULL);
   arrange(selmon);
 }
