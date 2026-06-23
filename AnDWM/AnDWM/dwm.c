@@ -3435,7 +3435,6 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
     if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky && !HIDDEN(c)) {
       setclientstate(c, IconicState);
       XUnmapWindow(dpy, c->win);
-      XSync(dpy, False);
       c->isautominimized = 1;
       if (c->lastvisible == 0)
         c->lastvisible = time(NULL);
