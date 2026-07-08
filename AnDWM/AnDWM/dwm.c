@@ -25,6 +25,7 @@
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
+#include <X11/XKBlib.h>
 #include <X11/keysym.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -54,6 +55,9 @@
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
 #include <stdbool.h>
+
+#define SIDEBAR_WIDTH 64
+#define SIDEBAR_CLICK_THRESH 5
 
 #define FIFO_PATH "/tmp/dwm-pipn.fifo"
 static void
@@ -136,6 +140,10 @@ enum {
   SchemeTag3,
   SchemeTag4,
   SchemeTag5,
+  SchemeTag6,
+  SchemeTag7,
+  SchemeTag8,
+  SchemeTag9,
   SchemeLayout,
   TabSel,
   TabNorm,
@@ -167,6 +175,7 @@ enum {
   NetNumberOfDesktops,
   NetCurrentDesktop,
   NetNoAnimation,
+  NetBarLeft,
   NetLast
 }; /* EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
@@ -236,6 +245,7 @@ struct Client {
   int wasfloating;
   unsigned int oldtags;
   unsigned int icw, ich;
+  unsigned int ic_pw, ic_ph; /* actual picture pixel dimensions after drw_picture_create_resized */
   Picture icon;
   int beingmoved;
   Client *next;
@@ -320,6 +330,11 @@ static void drawbars(void);
 static int drawstatusbar(Monitor *m, int bh, char *text);
 static void drawtab(Monitor *m);
 static void drawtabs(void);
+static void calcsidebar(Monitor *m);
+static void drawsidebar(Monitor *m);
+static void drawsidbars(void);
+static void showsidbar(Monitor *m);
+static void hideosidebar(Monitor *m);
 static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
@@ -329,7 +344,7 @@ static void focusstack(const Arg *arg);
 static void focuswin(const Arg *arg);
 static void focusunderpointer(void);
 static Atom getatomprop(Client *c, Atom prop);
-static Picture geticonprop(Window w, unsigned int *icw, unsigned int *ich);
+static Picture geticonprop(Window w, unsigned int *icw, unsigned int *ich, unsigned int *pw, unsigned int *ph);
 static int getrootptr(int *x, int *y);
 static long getstate(Window w);
 static unsigned int getsystraywidth();
@@ -439,6 +454,7 @@ static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static Window ontopsibling(Monitor *m, Client *exclude);
 static void zoom(const Arg *arg);
+static void alttab(const Arg *arg);
 
 /* variables */
 static Systray *systray = NULL;
@@ -462,6 +478,7 @@ static void (*handler[LASTEvent])(XEvent *) = {
     [Expose] = expose,
     [FocusIn] = focusin,
     [KeyPress] = keypress,
+    [KeyRelease] = keypress,
     [MappingNotify] = mappingnotify,
     [MapRequest] = maprequest,
     [MotionNotify] = motionnotify,
@@ -470,6 +487,8 @@ static void (*handler[LASTEvent])(XEvent *) = {
     [UnmapNotify] = unmapnotify};
 static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
 static int running = 1;
+static int xkb_event_base = 0;
+static int alt_held = 0;
 /* When non-zero, tiled-resizes use animated transitions via
  * resizeclient_animated. You can temporarily disable it to have
  * instant resize via resizeclient. */
@@ -480,7 +499,6 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
-
 
 #define hiddenWinStackMax 100
 static int hiddenWinStackTop = -1;
@@ -517,6 +535,10 @@ struct Monitor {
   Window barwin;
   Window tabwin;
   Window tagwin;
+  Window sidebarwin;
+  int sidebarvisible;
+  int sidebarh;
+  int sidebarw;
   Pixmap tagmap[LENGTH(tags)];
   int previewshow;
   int ntabs;
@@ -786,6 +808,27 @@ void buttonpress(XEvent *e) {
       if (ev->x >= x)
         click = ClkTabPrev + loop;
     }
+  } else if (enablesidebar && ev->window == selmon->sidebarwin) {
+    /* sidebar click - find which app was clicked */
+    int count = 0;
+    Client *visible[MAXTABS];
+    Client *clicked = NULL;
+    for (c = selmon->clients; c; c = c->next) {
+      if (ISVISIBLE(c) && count < MAXTABS) {
+        visible[count++] = c;
+      }
+    }
+    if (count > 0) {
+      int itemh = selmon->mh / 3 / count;
+      int clicked_idx = ev->y / itemh;
+      if (clicked_idx >= 0 && clicked_idx < count) {
+        clicked = visible[clicked_idx];
+      }
+    }
+    if (clicked) {
+      selmon = clicked->mon;
+      focus(clicked);
+    }
   } else if ((c = wintoclient(ev->window))) {
     click = ClkClientWin;
     clientbinding = 0;
@@ -879,6 +922,8 @@ void cleanupmon(Monitor *mon) {
   XDestroyWindow(dpy, mon->tabwin);
   XUnmapWindow(dpy, mon->tagwin);
   XDestroyWindow(dpy, mon->tagwin);
+  XUnmapWindow(dpy, mon->sidebarwin);
+  XDestroyWindow(dpy, mon->sidebarwin);
   free(mon);
 }
 
@@ -995,7 +1040,7 @@ void configurenotify(XEvent *e) {
     sw = ev->width;
     sh = ev->height;
     if (updategeom() || dirty) {
-      drw_resize(drw, sw, bh);
+      drw_resize(drw, sw, sh);
       updatebars();
       for (m = mons; m; m = m->next) {
         for (c = m->clients; c; c = c->next)
@@ -1003,6 +1048,9 @@ void configurenotify(XEvent *e) {
             resizeclient(c, m->mx, m->my, m->mw, m->mh);
         resizebarwin(m);
       }
+      for (m = mons; m; m = m->next)
+        if (m->sidebarvisible)
+          drawsidebar(m);
       focus(NULL);
       arrange(NULL);
     }
@@ -1084,6 +1132,8 @@ Monitor *createmon(void) {
   for (i = 0; i < LENGTH(tags); i++)
     m->tagmap[i] = 0;
   m->previewshow = 0;
+  m->sidebarw = SIDEBAR_WIDTH;
+  m->sidebarh = 1;
   strncpy(m->ltsymbol, layouts[0].symbol, sizeof m->ltsymbol);
   m->pertag = ecalloc(1, sizeof(Pertag));
   m->pertag->curtag = m->pertag->prevtag = 1;
@@ -1704,7 +1754,7 @@ static uint32_t prealpha(uint32_t p) {
   return (rb & 0xFF00FFu) | (g & 0x00FF00u) | (a << 24u);
 }
 
-Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
+Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich, unsigned int *pw, unsigned int *ph) {
   int format;
   unsigned long n, extra, *p = NULL;
   Atom real;
@@ -1781,6 +1831,15 @@ Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
     bstp32[i] = prealpha(bstp[i]);
 
   Picture ret = drw_picture_create_resized(drw, (char *)bstp, w, h, icw, ich);
+  if (ret) {
+    if (w <= 2 * icw && h <= 2 * ich) {
+      *pw = w; *ph = h; /* XRender path: picture pixmap at original source size */
+    } else {
+      *pw = icw; *ph = ich; /* Imlib2 path: picture pixmap at target size */
+    }
+  } else {
+    *pw = 0; *ph = 0;
+  }
   XFree(p);
 
   return ret;
@@ -1897,6 +1956,182 @@ void drawtab(Monitor *m) {
   drw_map(drw, m->tabwin, 0, 0, m->ww, th);
 }
 
+void calcsidebar(Monitor *m) {
+  Client *c;
+  int cnt = 0;
+  for (c = m->clients; c; c = c->next)
+    if (ISVISIBLE(c) && !HIDDEN(c))
+      cnt++;
+
+  if (cnt == 0) {
+    m->sidebarh = m->mh / 3;
+    m->sidebarw = SIDEBAR_WIDTH;
+    return;
+  }
+
+  int base;
+  if (cnt > 7) {
+    base = 30;
+    m->sidebarw = 48;
+  } else if (cnt > 3) {
+    base = 42;
+    m->sidebarw = SIDEBAR_WIDTH;
+  } else {
+    base = 48;
+    m->sidebarw = SIDEBAR_WIDTH;
+  }
+
+  m->sidebarh = cnt * base + 8;
+  if (m->sidebarh > m->mh * 2 / 5)
+    m->sidebarh = m->mh * 2 / 5;
+  if (m->sidebarh < 50)
+    m->sidebarh = 50;
+}
+
+void drawsidebar(Monitor *m) {
+  if (!m->sidebarvisible)
+    return;
+
+  Client *c;
+  int count = 0;
+  Client *visible[MAXTABS];
+
+  for (c = m->clients; c; c = c->next) {
+    if (ISVISIBLE(c) && !HIDDEN(c)) {
+      visible[count++] = c;
+      if (count >= MAXTABS)
+        break;
+    }
+  }
+
+  if (!count) {
+    XUnmapWindow(dpy, m->sidebarwin);
+    m->sidebarvisible = 0;
+    return;
+  }
+
+  calcsidebar(m);
+  int sh = m->sidebarh;
+  int sw = m->sidebarw;
+
+  /* reposition window to centered y */
+  int sidebary = m->my + (m->mh - sh) / 2;
+  XMoveResizeWindow(dpy, m->sidebarwin, m->mx + m->gappov * 2, sidebary, sw, sh);
+
+  int margin = 6;
+  int pad = 4;
+  int content_h = sh - 2 * margin;
+  int itemh = (content_h - pad * (count - 1)) / count;
+
+  /* find current workspace tag color index */
+  int tagcolor_idx = SchemeTag1;
+  for (int t = 0; t < LENGTH(tags); t++) {
+    if (m->tagset[m->seltags] & (1 << t)) {
+      tagcolor_idx = tagschemes[t];
+      break;
+    }
+  }
+
+  /* clear background */
+  drw_setscheme(drw, scheme[SchemeNorm]);
+  drw_rect(drw, 0, 0, sw, sh, 1, 1);
+
+  for (int i = 0; i < count; i++) {
+    c = visible[i];
+    int y = margin + i * (itemh + pad);
+
+    /* focus indicator — only for current focus, small indicator */
+    if (c == m->sel) {
+      drw_setscheme(drw, scheme[tagcolor_idx]);
+      drw_rect(drw, 2, y + itemh / 2 - 5, 3, 10, 1, 0);
+    }
+
+    /* draw app icon if available */
+    if (c->icon && c->icw > 0 && c->ic_pw > 0) {
+      int icon_h = itemh - pad;
+      if (icon_h > sw - 2 * margin) icon_h = sw - 2 * margin;
+      if (icon_h < 16) icon_h = 16;
+      int icon_y = y + (itemh - icon_h) / 2;
+      int icon_x = (sw - icon_h) / 2;
+      /* set sidebar-scale transform */
+      XTransform xf;
+      xf.matrix[0][0] = (c->ic_pw << 16) / icon_h;
+      xf.matrix[0][1] = 0; xf.matrix[0][2] = 0;
+      xf.matrix[1][0] = 0; xf.matrix[1][1] = (c->ic_ph << 16) / icon_h;
+      xf.matrix[1][2] = 0;
+      xf.matrix[2][0] = 0; xf.matrix[2][1] = 0; xf.matrix[2][2] = 65536;
+      XRenderSetPictureTransform(drw->dpy, c->icon, &xf);
+      drw_pic(drw, icon_x, icon_y, icon_h, icon_h, c->icon);
+      /* restore original transform */
+      xf.matrix[0][0] = (c->ic_pw << 16) / c->icw;
+      xf.matrix[1][1] = (c->ic_ph << 16) / c->ich;
+      XRenderSetPictureTransform(drw->dpy, c->icon, &xf);
+    } else {
+      /* fallback */
+      drw_setscheme(drw, scheme[c == m->sel ? SchemeSel : SchemeNorm]);
+      drw_rect(drw, 4, y + 2, itemh - 4, itemh - 4, 1, 0);
+    }
+  }
+
+  drw_map(drw, m->sidebarwin, 0, 0, sw, sh);
+}
+
+void drawsidbars(void) {
+  Monitor *m;
+  for (m = mons; m; m = m->next)
+    drawsidebar(m);
+}
+
+void showsidbar(Monitor *m) {
+  Client *c;
+  int count = 0;
+  /* only show if there are visible apps */
+  for (c = m->clients; c; c = c->next)
+    if (ISVISIBLE(c) && !HIDDEN(c)) {
+      count++;
+      break;
+    }
+  if (!count) {
+    hideosidebar(m);
+    return;
+  }
+  if (!m->sidebarvisible) {
+    m->sidebarvisible = 1;
+    XMapWindow(dpy, m->sidebarwin);
+    XRaiseWindow(dpy, m->sidebarwin);
+    drawsidebar(m);
+  }
+}
+
+void hideosidebar(Monitor *m) {
+  if (m->sidebarvisible) {
+    m->sidebarvisible = 0;
+    XUnmapWindow(dpy, m->sidebarwin);
+  }
+}
+
+void alttab(const Arg *arg) {
+  static int alttab_idx = 0;
+  static int alttab_count = 0;
+  static Client *alttab_list[MAXTABS];
+  int forward = arg->i;
+  Client *c;
+
+  /* build candidate list */
+  alttab_count = 0;
+  for (c = selmon->clients; c; c = c->next)
+    if (ISVISIBLE(c) && !HIDDEN(c))
+      alttab_list[alttab_count++] = c;
+
+  if (alttab_count == 0)
+    return;
+
+  alttab_idx = (alttab_idx + forward + alttab_count) % alttab_count;
+  focus(alttab_list[alttab_idx]);
+  showsidbar(selmon);
+  drawsidebar(selmon);
+}
+
 void enternotify(XEvent *e) {
   Client *c;
   Monitor *m;
@@ -1973,6 +2208,7 @@ void focus(Client *c) {
 
   drawbars();
   drawtabs();
+  drawsidbars();
 }
 
 /* there are some broken focus acquiring clients needing extra handling */
@@ -2020,6 +2256,9 @@ void focusstack(const Arg *arg) {
   if (c) {
     focus(c);
     restack(selmon);
+    XWarpPointer(dpy, None, c->win, 0, 0, 0, 0,
+                 c->w / 2, c->h / 2);
+    XSync(dpy, False);
   }
 }
 
@@ -2244,6 +2483,11 @@ void keypress(XEvent *e) {
 
   ev = &e->xkey;
   keysym = XKeycodeToKeysym(dpy, (KeyCode)ev->keycode, 0);
+
+  /* only KeyPress triggers normal keybindings (avoid double-fire on KeyRelease) */
+  if (ev->type != KeyPress)
+    return;
+
   for (i = 0; i < LENGTH(keys); i++)
     if (keysym == keys[i].keysym &&
         CLEANMASK(keys[i].mod) == CLEANMASK(ev->state) && keys[i].func)
@@ -2771,11 +3015,16 @@ void motionnotify(XEvent *e) {
     showtagpreview(0);
   }
 
-  if (ev->window != root)
+  if (ev->window != root) {
     return;
+  }
   if ((m = recttomon(ev->x_root, ev->y_root, 1, 1)) != mon && mon) {
     unfocus(selmon->sel, 1);
     selmon = m;
+    if (alt_held && enablesidebar) {
+      hideosidebar(mon);
+      showsidbar(selmon);
+    }
     focus(NULL);
   }
   mon = m;
@@ -2783,7 +3032,7 @@ void motionnotify(XEvent *e) {
 
 void updateicon(Client *c) {
   freeicon(c);
-  c->icon = geticonprop(c->win, &c->icw, &c->ich);
+  c->icon = geticonprop(c->win, &c->icw, &c->ich, &c->ic_pw, &c->ic_ph);
 }
 
 void moveorplace(const Arg *arg) {
@@ -3373,6 +3622,7 @@ void restack(Monitor *m) {
 
   drawbar(m);
   drawtab(m);
+  drawsidebar(m);
 
   if (!m)
     return;
@@ -3413,6 +3663,8 @@ void restack(Monitor *m) {
   XSync(dpy, False);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
+  if (m && m->sidebarvisible)
+    XRaiseWindow(dpy, m->sidebarwin);
 }void checkminimize(void) {
   Monitor *m;
   Client *c;
@@ -3488,6 +3740,23 @@ void run(void) {
     n = poll(&pfd, 1, 1000);
     while (XPending(dpy)) {
       XNextEvent(dpy, &ev);
+
+      /* Xkb StateNotify for Alt sidebar tracking */
+      if (xkb_event_base && ev.type == xkb_event_base) {
+        XkbEvent *xkbev = (XkbEvent *)&ev;
+        if (xkbev->any.xkb_type == XkbStateNotify) {
+          int new_alt = (xkbev->state.mods & Mod1Mask) != 0;
+          if (enablesidebar && selmon) {
+            if (new_alt && !alt_held)
+              showsidbar(selmon);
+            else if (!new_alt && alt_held)
+              hideosidebar(selmon);
+          }
+          alt_held = new_alt;
+        }
+        continue;
+      }
+
       if (handler[ev.type])
         handler[ev.type](&ev); /* call handler */
     }
@@ -4220,6 +4489,7 @@ void setup(void) {
   netatom[NetDesktopNames] = XInternAtom(dpy, "_NET_DESKTOP_NAMES", False);
   netatom[NetClientInfo] = XInternAtom(dpy, "_NET_CLIENT_INFO", False);
   netatom[NetNoAnimation] = XInternAtom(dpy, "_NO_ANIMATION", False);
+  netatom[NetBarLeft] = XInternAtom(dpy, "_BAR_LEFT", False);
   /* init cursors */
   cursor[CurNormal] = drw_cur_create(drw, "left_ptr");
   cursor[CurResize] = drw_cur_create(drw, "sizing");
@@ -4271,6 +4541,9 @@ void setup(void) {
   XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &wa);
   XSelectInput(dpy, root, wa.event_mask);
   grabkeys();
+  /* Xkb StateNotify for Alt sidebar tracking */
+  if (XkbQueryExtension(dpy, NULL, &xkb_event_base, NULL, NULL, NULL))
+    XkbSelectEvents(dpy, XkbUseCoreKbd, XkbStateNotifyMask, XkbStateNotifyMask);
   focus(NULL);
 }
 void setviewport(void) {
@@ -4700,6 +4973,18 @@ void updatebars(void) {
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->tabwin, cursor[CurNormal]->cursor);
     XMapRaised(dpy, m->tabwin);
+    /* sidebar window */
+    XSetWindowAttributes swa = {.override_redirect = True,
+                                .event_mask = ButtonPressMask | EnterWindowMask |
+                                              PointerMotionMask};
+    m->sidebarwin = XCreateWindow(
+        dpy, root, m->mx + m->gappov * 2, m->my + m->mh / 3, SIDEBAR_WIDTH, m->mh / 3, 0,
+        DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
+        CWOverrideRedirect | CWEventMask, &swa);
+    XChangeProperty(dpy, m->sidebarwin, netatom[NetBarLeft], XA_ATOM, 32,
+                    PropModeReplace, (unsigned char *)&netatom[NetBarLeft], 1);
+    /* don't map here — only show when apps exist */
+    m->sidebarvisible = 0;
     XSetClassHint(dpy, m->barwin, &ch);
   }
 }
@@ -4760,6 +5045,12 @@ void updatebarpos(Monitor *m) {
     }
   } else
     m->by = -bh - m->gappoh;
+  /* resize sidebar */
+  if (m->sidebarwin) {
+    calcsidebar(m);
+    int sidebary = m->my + (m->mh - m->sidebarh) / 2;
+    XMoveResizeWindow(dpy, m->sidebarwin, m->mx + m->gappov * 2, sidebary, m->sidebarw, m->sidebarh);
+  }
 }
 
 void updateclientlist() {

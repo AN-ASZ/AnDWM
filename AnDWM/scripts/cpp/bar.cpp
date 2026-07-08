@@ -1,6 +1,6 @@
 #include <algorithm>
 #include <array>
-#include <cerrno>
+#include <filesystem>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -140,17 +140,36 @@ Display *getDisplay() {
   return d;
 }
 
-
-void setFan(const std::string& value) {
-    std::string cmd = "/usr/local/bin/fan " + value;  // path to your fan binary
-    int ret = std::system(cmd.c_str());
-    if (ret != 0) {
-        std::cerr << "Failed to set fan control\n";
+static string findFanPath() {
+    const string base = "/sys/devices/platform/asus-nb-wmi/hwmon/";
+    for (const auto& entry : filesystem::recursive_directory_iterator(base)) {
+        if (entry.is_regular_file() && entry.path().filename().string() == "pwm1_enable") {
+            return entry.path().parent_path().string();
+        }
     }
+    return "";
 }
 
-bool read_fullscreen() {
-  std::ifstream f("/tmp/isfullscreen");
+string pwmPath;
+string fanPath;
+void setFan(const string& value) {
+    fanPath = findFanPath();
+    if (fanPath.empty()) {
+        cerr << "Failed to find fan control path\n";
+        return;
+    }
+    pwmPath = fanPath + "/pwm1_enable";
+    ofstream f(pwmPath);
+    if (!f.is_open()) {
+        cerr << "Failed to open " << pwmPath << "\n";
+        return;
+    }
+    f << value;
+    f.close();
+}
+
+bool read_tmp(const string path) {
+  std::ifstream f(path);
 
   if (!f.is_open()) {
     return false;
@@ -162,6 +181,10 @@ bool read_fullscreen() {
   }
 
   return value != 0;
+}
+
+bool read_fullscreen() {
+  return read_tmp("/tmp/isfullscreen");
 }
 
 string trim(const string &str) {
@@ -699,9 +722,33 @@ string player_info(const string &app) {
 
 // --- Main Logic ---
 
-bool bat_st = 0;
+bool fan_st = 0;
+
+bool removeTmp(const std::string& filename) {
+    std::string path = "/tmp/" + filename;
+    if (std::remove(path.c_str()) != 0) {
+        return false;
+    }
+    return true;
+}
+
+string sav_perf_icon = "";
+string sav_fan_icon = "";
+
 
 string handle() {
+  string tlp = read_file("/run/tlp/last_pwr");
+  
+  if ( tlp == "0 0" && fan_st == 0){
+    //printf("%s",tlp);
+    setFan("0");
+    fan_st=1;
+  } else if (tlp != "0 0" && fan_st==1){
+    //printf("%s",tlp);
+    setFan("2");
+    fan_st=0;
+  }
+  
   auto f_wifi = pool.enqueue(get_wifi_info);
   auto f_mem_used = pool.enqueue(getMemUsedStr);
   auto f_mem_unit = pool.enqueue(getMemUnitStr);
@@ -736,7 +783,7 @@ string handle() {
     else
       wicon = "󰤟";
   }
-
+  
   string cap_s = read_file("/sys/class/power_supply/BAT0/capacity");
   string chg_s = read_file("/sys/class/power_supply/AC0/online");
   int capacity = cap_s.empty() ? 0 : stoi(cap_s);
@@ -747,13 +794,12 @@ string handle() {
                  : (capacity >= 20) ? "󰁼"
                                     : "󰁺";
 
-  if(charging == 1 && !bat_st) {
-    setFan("0");
-    bat_st = 1;
-  } else if(charging == 0 && bat_st) {
-    setFan("2");
-    bat_st = 0;
-  }
+  if ( read_file(pwmPath) == "2" ){
+    sav_fan_icon="";
+  } else sav_fan_icon="";
+  if ( read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")!="performance" ){
+    sav_perf_icon="";
+  } else sav_perf_icon="";
   
   string result;
 
@@ -768,7 +814,7 @@ string handle() {
     }
   } else {
     g_scroll_index = 0;
-    result = "^c" + blue + "^" + bicon + " " + to_string(capacity) + "%^c" +
+    result = "^c" + grey + "^" + sav_fan_icon + " " + sav_perf_icon + "  ^c" + blue + "^" + bicon + " " + to_string(capacity) + "%^c" +
              black + "^ ^b" + green + "^ ^c" + white + "^ ^b" + grey + "^ " +
              cpu_usage + "% ^d^";
     result += "^c" + t_color + "^ ^b" + green + "^ " + icon + "^c" + white +
