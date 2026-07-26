@@ -136,7 +136,6 @@ Display *getDisplay() {
       exit(1);
     }
   }
-
   return d;
 }
 
@@ -738,7 +737,7 @@ string sav_fan_icon = "";
 
 string handle() {
   string tlp = read_file("/run/tlp/last_pwr");
-  
+
   if ( tlp == "0 0" && fan_st == 0){
     //printf("%s",tlp);
     setFan("0");
@@ -774,11 +773,11 @@ string handle() {
   if (!wifi.is_up) {
     wicon = "󰤭";
   } else {
-    if (wifi.strength > 75)
+    if (wifi.strength > 60)
       wicon = "󰤨";
-    else if (wifi.strength > 50)
+    else if (wifi.strength > 45)
       wicon = "󰤥";
-    else if (wifi.strength > 25)
+    else if (wifi.strength > 35)
       wicon = "󰤢";
     else
       wicon = "󰤟";

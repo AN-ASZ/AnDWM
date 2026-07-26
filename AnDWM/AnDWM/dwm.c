@@ -2404,12 +2404,12 @@ void grabbuttons(Client *c, int focused) {
     XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
     if (!focused)
       XGrabButton(dpy, AnyButton, AnyModifier, c->win, False, BUTTONMASK,
-                  GrabModeAsync, GrabModeSync, None, None);
+                  GrabModeAsync, GrabModeAsync, None, None);
     for (i = 0; i < LENGTH(buttons); i++)
       if (buttons[i].click == ClkClientWin)
         for (j = 0; j < LENGTH(modifiers); j++)
           XGrabButton(dpy, buttons[i].button, buttons[i].mask | modifiers[j],
-                      c->win, False, BUTTONMASK, GrabModeAsync, GrabModeSync,
+                      c->win, False, BUTTONMASK, GrabModeAsync, GrabModeAsync,
                       None, None);
   }
 }
@@ -4523,6 +4523,8 @@ void setup(void) {
                   PropModeReplace, (unsigned char *)"dwm", 3);
   XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
                   PropModeReplace, (unsigned char *)&wmcheckwin, 1);
+  XChangeProperty(dpy, root, netatom[NetWMName], utf8string, 8,
+                  PropModeReplace, (unsigned char *)"dwm", 3);
   /* EWMH support per view */
   XChangeProperty(dpy, root, netatom[NetSupported], XA_ATOM, 32,
                   PropModeReplace, (unsigned char *)netatom, NetLast);
