@@ -16,6 +16,8 @@ manager, and creates an XSession entry named `AnDWM`.
 Read `install.sh` before running it. The script uses `sudo`, installs packages,
 creates files under `/usr/share`, and can optionally install and enable Ly.
 
+**To make workspace transition animation work** - you must install my [PICOM](https://github.com/AN-ASZ/picom) patch
+
 ## Requirements
 
 Core requirements:

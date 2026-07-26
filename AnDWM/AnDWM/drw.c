@@ -4,6 +4,7 @@
 #include <string.h>
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
+#include <X11/Xcursor/Xcursor.h>
 #include <Imlib2.h>
 
 #include "drw.h"
@@ -506,14 +507,14 @@ drw_font_getexts(Fnt *font, const char *text, unsigned int len, unsigned int *w,
 }
 
 Cur *
-drw_cur_create(Drw *drw, int shape)
+drw_cur_create(Drw *drw, const char *name)
 {
 	Cur *cur;
 
 	if (!drw || !(cur = ecalloc(1, sizeof(Cur))))
 		return NULL;
 
-	cur->cursor = XCreateFontCursor(drw->dpy, shape);
+	cur->cursor = XcursorLibraryLoadCursor(drw->dpy, name);
 
 	return cur;
 }
