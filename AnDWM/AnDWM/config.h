@@ -40,6 +40,10 @@ static const int new_window_attach_on_end = 0; /*  1 means the new window will a
 #define ICONSIZE 19   /* icon size */
 #define ICONSPACING 8 /* space between icon and title */
 
+/* sidebar app list */
+static const int enablesidebar = 1;       /* 1 = enabled, 0 = disabled */
+static const int sidebaretrigger = 4;     /* px from left edge to auto-show */
+
 static const char *fonts[] = {
     "Iosevka Medium:style:medium:size=11.5",                      // Latin / main compact font
     "Hack Nerd Font Mono:style:Bold:size=19",
@@ -70,6 +74,9 @@ static const char *colors[][3]      = {
     [SchemeTag3]       = { orange,  black,  black },
     [SchemeTag4]       = { green,   black,  black },
     [SchemeTag5]       = { pink,    black,  black },
+    [SchemeTag6]       = { purple,  black,  black },
+    [SchemeTag7]       = { brown,   black,  black },
+    [SchemeTag8]       = { cyan,    black,  black },
     [SchemeLayout]     = { green,   black,  black },
     [SchemeBtnPrev]    = { green,   black,  black },
     [SchemeBtnNext]    = { yellow,  black,  black },
@@ -88,7 +95,8 @@ static const Launcher launchers[] = {
 };
 
 static const int tagschemes[] = {
-    SchemeTag1, SchemeTag2, SchemeTag3, SchemeTag4, SchemeTag5
+    SchemeTag1, SchemeTag2, SchemeTag3, SchemeTag4, SchemeTag5,
+    SchemeTag6, SchemeTag7, SchemeTag8
 };
 
 static const unsigned int ulinepad      = 5; /* horizontal padding between the underline and tag */
@@ -260,6 +268,10 @@ static const Key keys[] = {
     // hide & restore windows
     { MODKEY,                           XK_h,       togglewin,      {0} },
     { MODKEY|ShiftMask,                 XK_h,       restorewin,     {0} },
+
+
+    { Mod1Mask,                           XK_Tab,     focusstack,     {.i = +1 } },
+    { Mod1Mask|ShiftMask,                 XK_Tab,     focusstack,     {.i = -1 } },
 
 
     TAGKEYS(                            XK_1,                       0)
