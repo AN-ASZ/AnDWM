@@ -5,6 +5,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <fcntl.h>
@@ -13,9 +14,14 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <netlink/genl/ctrl.h>
+#include <netlink/genl/genl.h>
+#include <netlink/msg.h>
+#include <netlink/netlink.h>
 #include <queue>
 #include <sdbus-c++/sdbus-c++.h>
 #include <sstream>
@@ -23,6 +29,7 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include <linux/nl80211.h>
 
 // --- Thread Pool ---
 class ThreadPool {
@@ -117,11 +124,6 @@ bool DimMode = 0;
 // --- DBus Connections ---
 sdbus::IConnection &getBus() {
   static auto connection = sdbus::createSessionBusConnection();
-  return *connection;
-}
-
-sdbus::IConnection &getSystemBus() {
-  static auto connection = sdbus::createSystemBusConnection();
   return *connection;
 }
 
@@ -223,6 +225,34 @@ string read_file(const string &path) {
   return s;
 }
 
+int readTemperatureCelsius() {
+  vector<string> paths = {
+      "/sys/class/thermal/thermal_zone0/temp",
+      "/sys/class/thermal/thermal_zone1/temp",
+      "/sys/class/hwmon/hwmon0/temp1_input",
+      "/sys/class/hwmon/hwmon1/temp1_input",
+      "/sys/class/hwmon/hwmon2/temp1_input",
+      "/sys/class/hwmon/hwmon3/temp1_input",
+  };
+
+  int max_temp = -1;
+  for (const string &path : paths) {
+    string value = read_file(path);
+    if (value.empty())
+      continue;
+
+    try {
+      int temp = stoi(value);
+      if (temp > 1000)
+        temp /= 1000;
+      max_temp = max(max_temp, temp);
+    } catch (...) {
+    }
+  }
+
+  return max_temp;
+}
+
 string escape_quotes(string s) {
   string res;
   for (char c : s) {
@@ -277,7 +307,7 @@ void setAutoDimTimeout(Display *dpy, int timeout) {
     XFlush(dpy);
 }
 
-// --- NetworkManager DBus Logic ---
+// --- nl80211 Wi-Fi Logic ---
 
 struct WifiStatus {
   string ssid = "Disconnected";
@@ -285,78 +315,207 @@ struct WifiStatus {
   bool is_up = false;
 };
 
+struct Nl80211State {
+  nl_sock *sock = nullptr;
+  int family_id = -1;
+};
+
+struct WifiInterface {
+  int ifindex = -1;
+  string ssid;
+};
+
+static int nl_error_handler(sockaddr_nl *, nlmsgerr *err, void *arg) {
+  int *ret = static_cast<int *>(arg);
+  *ret = err->error;
+  return NL_STOP;
+}
+
+static int nl_finish_handler(nl_msg *, void *arg) {
+  int *ret = static_cast<int *>(arg);
+  *ret = 0;
+  return NL_SKIP;
+}
+
+static int nl_ack_handler(nl_msg *, void *arg) {
+  int *ret = static_cast<int *>(arg);
+  *ret = 0;
+  return NL_STOP;
+}
+
+static int nl_send_and_recv(Nl80211State &state, nl_msg *msg,
+                            nl_recvmsg_msg_cb_t valid_handler, void *arg) {
+  nl_cb *cb = nl_cb_alloc(NL_CB_DEFAULT);
+  if (!cb)
+    return -ENOMEM;
+
+  int ret = 1;
+  nl_cb_err(cb, NL_CB_CUSTOM, nl_error_handler, &ret);
+  nl_cb_set(cb, NL_CB_FINISH, NL_CB_CUSTOM, nl_finish_handler, &ret);
+  nl_cb_set(cb, NL_CB_ACK, NL_CB_CUSTOM, nl_ack_handler, &ret);
+  nl_cb_set(cb, NL_CB_VALID, NL_CB_CUSTOM, valid_handler, arg);
+
+  int send_ret = nl_send_auto(state.sock, msg);
+  if (send_ret < 0)
+    ret = send_ret;
+
+  while (ret > 0) {
+    int recv_ret = nl_recvmsgs(state.sock, cb);
+    if (recv_ret < 0)
+      ret = recv_ret;
+  }
+
+  nl_cb_put(cb);
+  return ret;
+}
+
+static bool nl80211_open(Nl80211State &state) {
+  state.sock = nl_socket_alloc();
+  if (!state.sock)
+    return false;
+
+  if (genl_connect(state.sock) < 0) {
+    nl_socket_free(state.sock);
+    state.sock = nullptr;
+    return false;
+  }
+
+  state.family_id = genl_ctrl_resolve(state.sock, "nl80211");
+  if (state.family_id < 0) {
+    nl_socket_free(state.sock);
+    state.sock = nullptr;
+    return false;
+  }
+
+  return true;
+}
+
+static void nl80211_close(Nl80211State &state) {
+  if (state.sock)
+    nl_socket_free(state.sock);
+  state.sock = nullptr;
+  state.family_id = -1;
+}
+
+static int wifi_interface_handler(nl_msg *msg, void *arg) {
+  auto *interfaces = static_cast<vector<WifiInterface> *>(arg);
+  genlmsghdr *gnlh = static_cast<genlmsghdr *>(nlmsg_data(nlmsg_hdr(msg)));
+  nlattr *attrs[NL80211_ATTR_MAX + 1];
+
+  if (nla_parse(attrs, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+                genlmsg_attrlen(gnlh, 0), nullptr) < 0)
+    return NL_SKIP;
+
+  if (!attrs[NL80211_ATTR_IFINDEX] || !attrs[NL80211_ATTR_IFTYPE])
+    return NL_SKIP;
+
+  if (nla_get_u32(attrs[NL80211_ATTR_IFTYPE]) != NL80211_IFTYPE_STATION)
+    return NL_SKIP;
+
+  WifiInterface iface;
+  iface.ifindex = nla_get_u32(attrs[NL80211_ATTR_IFINDEX]);
+
+  if (attrs[NL80211_ATTR_SSID]) {
+    char *ssid = static_cast<char *>(nla_data(attrs[NL80211_ATTR_SSID]));
+    iface.ssid.assign(ssid, ssid + nla_len(attrs[NL80211_ATTR_SSID]));
+  }
+
+  interfaces->push_back(iface);
+  return NL_SKIP;
+}
+
+static vector<WifiInterface> get_wifi_interfaces(Nl80211State &state) {
+  vector<WifiInterface> interfaces;
+  nl_msg *msg = nlmsg_alloc();
+  if (!msg)
+    return interfaces;
+
+  genlmsg_put(msg, 0, 0, state.family_id, 0, NLM_F_DUMP,
+              NL80211_CMD_GET_INTERFACE, 0);
+  nl_send_and_recv(state, msg, wifi_interface_handler, &interfaces);
+  nlmsg_free(msg);
+  return interfaces;
+}
+
+struct SignalInfo {
+  int dbm = numeric_limits<int>::min();
+};
+
+static int station_signal_handler(nl_msg *msg, void *arg) {
+  auto *signal = static_cast<SignalInfo *>(arg);
+  genlmsghdr *gnlh = static_cast<genlmsghdr *>(nlmsg_data(nlmsg_hdr(msg)));
+  nlattr *attrs[NL80211_ATTR_MAX + 1];
+  nlattr *station[NL80211_STA_INFO_MAX + 1];
+
+  if (nla_parse(attrs, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+                genlmsg_attrlen(gnlh, 0), nullptr) < 0)
+    return NL_SKIP;
+
+  if (!attrs[NL80211_ATTR_STA_INFO])
+    return NL_SKIP;
+
+  if (nla_parse_nested(station, NL80211_STA_INFO_MAX,
+                       attrs[NL80211_ATTR_STA_INFO], nullptr) < 0)
+    return NL_SKIP;
+
+  nlattr *signal_attr = station[NL80211_STA_INFO_SIGNAL_AVG]
+                            ? station[NL80211_STA_INFO_SIGNAL_AVG]
+                            : station[NL80211_STA_INFO_SIGNAL];
+  if (!signal_attr)
+    return NL_SKIP;
+
+  int dbm = static_cast<int8_t>(nla_get_u8(signal_attr));
+  if (dbm > signal->dbm)
+    signal->dbm = dbm;
+
+  return NL_SKIP;
+}
+
+static int signal_dbm_to_percent(int dbm) {
+  if (dbm <= -100)
+    return 0;
+  if (dbm >= -50)
+    return 100;
+  return (dbm + 100) * 2;
+}
+
+static int get_wifi_strength(Nl80211State &state, int ifindex) {
+  SignalInfo signal;
+  nl_msg *msg = nlmsg_alloc();
+  if (!msg)
+    return 0;
+
+  genlmsg_put(msg, 0, 0, state.family_id, 0, NLM_F_DUMP,
+              NL80211_CMD_GET_STATION, 0);
+  nla_put_u32(msg, NL80211_ATTR_IFINDEX, ifindex);
+  nl_send_and_recv(state, msg, station_signal_handler, &signal);
+  nlmsg_free(msg);
+
+  if (signal.dbm == numeric_limits<int>::min())
+    return 0;
+
+  return signal_dbm_to_percent(signal.dbm);
+}
+
 WifiStatus get_wifi_info() {
   WifiStatus status;
-  try {
-    auto &connection = getSystemBus();
-    auto nmProxy = sdbus::createProxy(
-        connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
-        sdbus::ObjectPath{"/org/freedesktop/NetworkManager"});
+  Nl80211State state;
 
-    sdbus::Variant vActiveConn;
-    nmProxy->callMethod("Get")
-        .onInterface("org.freedesktop.DBus.Properties")
-        .withArguments("org.freedesktop.NetworkManager", "PrimaryConnection")
-        .storeResultsTo(vActiveConn);
-    auto activeConnPath = vActiveConn.get<sdbus::ObjectPath>();
+  if (!nl80211_open(state))
+    return status;
 
-    if (activeConnPath.empty() || activeConnPath == "/")
-      return status;
+  vector<WifiInterface> interfaces = get_wifi_interfaces(state);
+  for (const WifiInterface &iface : interfaces) {
+    if (iface.ssid.empty())
+      continue;
 
-    auto connProxy = sdbus::createProxy(
-        connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
-        activeConnPath);
-    sdbus::Variant vDevices;
-    connProxy->callMethod("Get")
-        .onInterface("org.freedesktop.DBus.Properties")
-        .withArguments("org.freedesktop.NetworkManager.Connection.Active",
-                       "Devices")
-        .storeResultsTo(vDevices);
-    auto devices = vDevices.get<vector<sdbus::ObjectPath>>();
-
-    if (devices.empty())
-      return status;
-
-    auto deviceProxy = sdbus::createProxy(
-        connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
-        devices[0]);
-    sdbus::Variant vDeviceType;
-    deviceProxy->callMethod("Get")
-        .onInterface("org.freedesktop.DBus.Properties")
-        .withArguments("org.freedesktop.NetworkManager.Device", "DeviceType")
-        .storeResultsTo(vDeviceType);
-
-    if (vDeviceType.get<uint32_t>() == 2) { // Wi-Fi
-      status.is_up = true;
-      sdbus::Variant vApPath;
-      deviceProxy->callMethod("Get")
-          .onInterface("org.freedesktop.DBus.Properties")
-          .withArguments("org.freedesktop.NetworkManager.Device.Wireless",
-                         "ActiveAccessPoint")
-          .storeResultsTo(vApPath);
-      auto apPath = vApPath.get<sdbus::ObjectPath>();
-
-      auto apProxy = sdbus::createProxy(
-          connection, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
-          apPath);
-      sdbus::Variant vSsid, vStrength;
-      apProxy->callMethod("Get")
-          .onInterface("org.freedesktop.DBus.Properties")
-          .withArguments("org.freedesktop.NetworkManager.AccessPoint", "Ssid")
-          .storeResultsTo(vSsid);
-      apProxy->callMethod("Get")
-          .onInterface("org.freedesktop.DBus.Properties")
-          .withArguments("org.freedesktop.NetworkManager.AccessPoint",
-                         "Strength")
-          .storeResultsTo(vStrength);
-
-      auto ssidVec = vSsid.get<vector<uint8_t>>();
-      status.ssid = string(ssidVec.begin(), ssidVec.end());
-      status.strength = (int)vStrength.get<uint8_t>();
-    }
-  } catch (...) {
-    status.is_up = false;
+    status.ssid = iface.ssid;
+    status.strength = get_wifi_strength(state, iface.ifindex);
+    status.is_up = true;
+    break;
   }
+
+  nl80211_close(state);
   return status;
 }
 
@@ -737,12 +896,16 @@ string sav_fan_icon = "";
 
 string handle() {
   string tlp = read_file("/run/tlp/last_pwr");
-
-  if ( tlp == "0 0" && fan_st == 0){
+  string governor = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor");
+  int temp = readTemperatureCelsius();
+  bool performance_hot = governor == "performance" && temp > 79;
+  bool performance_cool = governor == "performance" && temp <= 79;
+  
+  if ( (tlp == "0 0" && performance_hot) && fan_st == 0){
     //printf("%s",tlp);
     setFan("0");
     fan_st=1;
-  } else if (tlp != "0 0" && fan_st==1){
+  } else if (( tlp != "0 0" || (tlp == "0 0" && performance_cool)) && fan_st == 1 ){
     //printf("%s",tlp);
     setFan("2");
     fan_st=0;
@@ -796,7 +959,7 @@ string handle() {
   if ( read_file(pwmPath) == "2" ){
     sav_fan_icon="";
   } else sav_fan_icon="";
-  if ( read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")!="performance" ){
+  if ( governor!="performance" ){
     sav_perf_icon="";
   } else sav_perf_icon="";
   
@@ -807,7 +970,7 @@ string handle() {
              icon + " ^d^";
     result += "^c" + black + "^ ^b" + blue + "^ " + wicon + " ^d^" +
               clock_time() + kb + "^c" + blue + "^ " + bicon;
-    if (DimMode == 0) {
+    if (dpy && DimMode == 0) {
       setAutoDimTimeout(dpy, 0);
       DimMode = 0;
     }
@@ -821,7 +984,7 @@ string handle() {
     result += "^c" + black + "^ ^b" + blue + "^ " + wicon + "^c" + white +
               "^ ^b" + grey + "^ " + (wifi.is_up ? wifi.ssid : "Disconnected") +
               " ^d^" + clock_time() + kb;
-    if (DimMode == 1) {
+    if (dpy && DimMode == 1) {
       setAutoDimTimeout(dpy, 600);
       DimMode = 1;
     }
@@ -830,12 +993,20 @@ string handle() {
 }
 
 int main() {
-  dpy = getDisplay();
+  bool print_to_stdout = getenv("BAR_PRINT_STDOUT") != nullptr;
+  if (!print_to_stdout)
+    dpy = getDisplay();
+
   while (true) {
-    if (!read_fullscreen()) {
+    if (print_to_stdout || !read_fullscreen()) {
       string bar_output = "   " + handle() + "^b" + black + "^ ";
-      string cmd = "xsetroot -name \"" + bar_output + "\"";
-      system(cmd.c_str());
+      if (print_to_stdout) {
+        cout << bar_output << endl;
+        break;
+      } else {
+        string cmd = "xsetroot -name \"" + bar_output + "\"";
+        system(cmd.c_str());
+      }
       usleep(700000);
     } else {
       usleep(5000000);
