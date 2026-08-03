@@ -113,9 +113,10 @@ static const Rule rules[] = {
     { "Gimp",     NULL,       NULL,       0,            0,           1,           0,        -1 },
     { "Firefox",  NULL,       NULL,       1 << 8,       0,           0,           0,        -1 },
     { "eww",      NULL,       NULL,       0,            0,           1,           0,        -1 },
-    { "spectacle",NULL,       NULL,       0,            1,           1,           1,        -1 },
-    { "wired",    NULL,       NULL,       0,            0,           1,           1,        -1 },
-    { "highlight-pointer",    NULL,       NULL,       0,            0,           1,           1,        -1 },
+    { "spectacle",NULL,       NULL,       0,            1,           1,           10,       -1 },
+    { "wired",    NULL,       NULL,       0,            0,           1,           10,       -1 },
+    { "highlight-pointer",    NULL,       NULL,       0,            0,           1,           99,       -1 },
+    { "mpv",      NULL,       NULL,       0,            1,           1,           1,        -1 },
 
 };
 
@@ -127,6 +128,7 @@ static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen win
 
 static const char *const transparent_fullscreen_classes[] = {
     "kitty",
+    "mpv",
     NULL,  /* sentinel */
 };
 

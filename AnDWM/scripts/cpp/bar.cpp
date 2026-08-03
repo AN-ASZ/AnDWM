@@ -5,7 +5,6 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
-#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <fcntl.h>
@@ -14,14 +13,9 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <netlink/genl/ctrl.h>
-#include <netlink/genl/genl.h>
-#include <netlink/msg.h>
-#include <netlink/netlink.h>
 #include <queue>
 #include <sdbus-c++/sdbus-c++.h>
 #include <sstream>
@@ -29,7 +23,6 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
-#include <linux/nl80211.h>
 
 // --- Thread Pool ---
 class ThreadPool {
@@ -127,6 +120,11 @@ sdbus::IConnection &getBus() {
   return *connection;
 }
 
+sdbus::IConnection &getSystemBus() {
+  static auto connection = sdbus::createSystemBusConnection();
+  return *connection;
+}
+
 // --- Utility Functions ---
 Display *getDisplay() {
   static Display *d = nullptr;
@@ -151,15 +149,20 @@ static string findFanPath() {
     return "";
 }
 
+// fanPath/pwmPath are resolved once at startup in main() so setFan() never
+// has to walk the sysfs tree on the hot path. The lookup here only runs
+// again if startup resolution failed (e.g. sysfs wasn't ready yet).
 string pwmPath;
 string fanPath;
 void setFan(const string& value) {
-    fanPath = findFanPath();
-    if (fanPath.empty()) {
-        cerr << "Failed to find fan control path\n";
-        return;
+    if (pwmPath.empty()) {
+        fanPath = findFanPath();
+        if (fanPath.empty()) {
+            cerr << "Failed to find fan control path\n";
+            return;
+        }
+        pwmPath = fanPath + "/pwm1_enable";
     }
-    pwmPath = fanPath + "/pwm1_enable";
     ofstream f(pwmPath);
     if (!f.is_open()) {
         cerr << "Failed to open " << pwmPath << "\n";
@@ -225,6 +228,18 @@ string read_file(const string &path) {
   return s;
 }
 
+string escape_quotes(string s) {
+  string res;
+  for (char c : s) {
+    if (c == '"')
+      res += "\\\"";
+    else
+      res += c;
+  }
+  return res;
+}
+
+
 int readTemperatureCelsius() {
   vector<string> paths = {
       "/sys/class/thermal/thermal_zone0/temp",
@@ -251,17 +266,6 @@ int readTemperatureCelsius() {
   }
 
   return max_temp;
-}
-
-string escape_quotes(string s) {
-  string res;
-  for (char c : s) {
-    if (c == '"')
-      res += "\\\"";
-    else
-      res += c;
-  }
-  return res;
 }
 
 // Prevent Dim Fcuntion
@@ -307,7 +311,7 @@ void setAutoDimTimeout(Display *dpy, int timeout) {
     XFlush(dpy);
 }
 
-// --- nl80211 Wi-Fi Logic ---
+// --- NetworkManager DBus Logic ---
 
 struct WifiStatus {
   string ssid = "Disconnected";
@@ -315,208 +319,241 @@ struct WifiStatus {
   bool is_up = false;
 };
 
-struct Nl80211State {
-  nl_sock *sock = nullptr;
-  int family_id = -1;
+class NetworkManagerWifiMonitor {
+public:
+  NetworkManagerWifiMonitor() {
+    try {
+      connection_ = sdbus::createSystemBusConnection();
+      nmProxy_ = sdbus::createProxy(
+          *connection_, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
+          sdbus::ObjectPath{"/org/freedesktop/NetworkManager"});
+      watchProperties(*nmProxy_, [this](const sdbus::InterfaceName &iface,
+                                        const map<sdbus::PropertyName,
+                                                  sdbus::Variant> &changed) {
+        if (iface == "org.freedesktop.NetworkManager")
+          handleNetworkManagerProperties(changed);
+      });
+      updatePrimaryConnection(
+          getProperty<sdbus::ObjectPath>(*nmProxy_,
+                                         "org.freedesktop.NetworkManager",
+                                         "PrimaryConnection"));
+      connection_->enterEventLoopAsync();
+    } catch (...) {
+      setDisconnected();
+    }
+  }
+
+  WifiStatus status() {
+    lock_guard<mutex> lock(mutex_);
+    return status_;
+  }
+
+private:
+  template <typename T>
+  static T getProperty(sdbus::IProxy &proxy, const char *interface,
+                       const char *property) {
+    sdbus::Variant value;
+    proxy.callMethod("Get")
+        .onInterface("org.freedesktop.DBus.Properties")
+        .withArguments(interface, property)
+        .storeResultsTo(value);
+    return value.get<T>();
+  }
+
+  static string ssidFromVariant(const sdbus::Variant &value) {
+    auto ssid = value.get<vector<uint8_t>>();
+    return string(ssid.begin(), ssid.end());
+  }
+
+  static bool validPath(const sdbus::ObjectPath &path) {
+    return !path.empty() && path != "/";
+  }
+
+  template <typename Callback>
+  static void watchProperties(sdbus::IProxy &proxy, Callback callback) {
+    proxy.uponSignal("PropertiesChanged")
+        .onInterface("org.freedesktop.DBus.Properties")
+        .call([callback](const sdbus::InterfaceName &interfaceName,
+                         const map<sdbus::PropertyName, sdbus::Variant>
+                             &changedProperties,
+                         const vector<sdbus::PropertyName> &) {
+          callback(interfaceName, changedProperties);
+        });
+  }
+
+  void setDisconnected() {
+    lock_guard<mutex> lock(mutex_);
+    status_ = WifiStatus{};
+  }
+
+  void setWifi(bool isUp, const string &ssid = "Disconnected",
+               int strength = 0) {
+    lock_guard<mutex> lock(mutex_);
+    status_.is_up = isUp;
+    status_.ssid = isUp ? ssid : "Disconnected";
+    status_.strength = isUp ? strength : 0;
+  }
+
+  void handleNetworkManagerProperties(
+      const map<sdbus::PropertyName, sdbus::Variant> &changed) {
+    auto it = changed.find(sdbus::PropertyName{"PrimaryConnection"});
+    if (it == changed.end())
+      return;
+
+    try {
+      updatePrimaryConnection(it->second.get<sdbus::ObjectPath>());
+    } catch (...) {
+      setDisconnected();
+    }
+  }
+
+  void handleActiveConnectionProperties(
+      const map<sdbus::PropertyName, sdbus::Variant> &changed) {
+    auto it = changed.find(sdbus::PropertyName{"Devices"});
+    if (it == changed.end())
+      return;
+
+    try {
+      updateDevices(it->second.get<vector<sdbus::ObjectPath>>());
+    } catch (...) {
+      setDisconnected();
+    }
+  }
+
+  void handleWirelessProperties(
+      const map<sdbus::PropertyName, sdbus::Variant> &changed) {
+    auto it = changed.find(sdbus::PropertyName{"ActiveAccessPoint"});
+    if (it == changed.end())
+      return;
+
+    try {
+      updateAccessPoint(it->second.get<sdbus::ObjectPath>());
+    } catch (...) {
+      setDisconnected();
+    }
+  }
+
+  void handleAccessPointProperties(
+      const map<sdbus::PropertyName, sdbus::Variant> &changed) {
+    try {
+      lock_guard<mutex> lock(mutex_);
+      auto ssid = changed.find(sdbus::PropertyName{"Ssid"});
+      if (ssid != changed.end())
+        status_.ssid = ssidFromVariant(ssid->second);
+
+      auto strength = changed.find(sdbus::PropertyName{"Strength"});
+      if (strength != changed.end())
+        status_.strength = strength->second.get<uint8_t>();
+
+      status_.is_up = true;
+    } catch (...) {
+      setDisconnected();
+    }
+  }
+
+  void updatePrimaryConnection(const sdbus::ObjectPath &activeConnPath) {
+    activeConnProxy_.reset();
+    wirelessDeviceProxy_.reset();
+    accessPointProxy_.reset();
+
+    if (!validPath(activeConnPath)) {
+      setDisconnected();
+      return;
+    }
+
+    activeConnProxy_ = sdbus::createProxy(
+        *connection_, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
+        activeConnPath);
+    watchProperties(*activeConnProxy_,
+                    [this](const sdbus::InterfaceName &iface,
+                           const map<sdbus::PropertyName, sdbus::Variant>
+                               &changed) {
+                      if (iface ==
+                          "org.freedesktop.NetworkManager.Connection.Active")
+                        handleActiveConnectionProperties(changed);
+                    });
+    updateDevices(getProperty<vector<sdbus::ObjectPath>>(
+        *activeConnProxy_, "org.freedesktop.NetworkManager.Connection.Active",
+        "Devices"));
+  }
+
+  void updateDevices(const vector<sdbus::ObjectPath> &devices) {
+    wirelessDeviceProxy_.reset();
+    accessPointProxy_.reset();
+
+    for (const auto &device : devices) {
+      auto deviceProxy = sdbus::createProxy(
+          *connection_, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
+          device);
+      uint32_t type = getProperty<uint32_t>(
+          *deviceProxy, "org.freedesktop.NetworkManager.Device", "DeviceType");
+      if (type != 2)
+        continue;
+
+      wirelessDeviceProxy_ = std::move(deviceProxy);
+      watchProperties(*wirelessDeviceProxy_,
+                      [this](const sdbus::InterfaceName &iface,
+                             const map<sdbus::PropertyName, sdbus::Variant>
+                                 &changed) {
+                        if (iface ==
+                            "org.freedesktop.NetworkManager.Device.Wireless")
+                          handleWirelessProperties(changed);
+                      });
+      updateAccessPoint(getProperty<sdbus::ObjectPath>(
+          *wirelessDeviceProxy_,
+          "org.freedesktop.NetworkManager.Device.Wireless",
+          "ActiveAccessPoint"));
+      return;
+    }
+
+    setDisconnected();
+  }
+
+  void updateAccessPoint(const sdbus::ObjectPath &apPath) {
+    accessPointProxy_.reset();
+
+    if (!validPath(apPath)) {
+      setDisconnected();
+      return;
+    }
+
+    accessPointProxy_ = sdbus::createProxy(
+        *connection_, sdbus::ServiceName{"org.freedesktop.NetworkManager"},
+        apPath);
+    watchProperties(*accessPointProxy_,
+                    [this](const sdbus::InterfaceName &iface,
+                           const map<sdbus::PropertyName, sdbus::Variant>
+                               &changed) {
+                      if (iface ==
+                          "org.freedesktop.NetworkManager.AccessPoint")
+                        handleAccessPointProperties(changed);
+                    });
+
+    sdbus::Variant vSsid, vStrength;
+    accessPointProxy_->callMethod("Get")
+        .onInterface("org.freedesktop.DBus.Properties")
+        .withArguments("org.freedesktop.NetworkManager.AccessPoint", "Ssid")
+        .storeResultsTo(vSsid);
+    accessPointProxy_->callMethod("Get")
+        .onInterface("org.freedesktop.DBus.Properties")
+        .withArguments("org.freedesktop.NetworkManager.AccessPoint",
+                       "Strength")
+        .storeResultsTo(vStrength);
+    setWifi(true, ssidFromVariant(vSsid), vStrength.get<uint8_t>());
+  }
+
+  unique_ptr<sdbus::IConnection> connection_;
+  unique_ptr<sdbus::IProxy> nmProxy_;
+  unique_ptr<sdbus::IProxy> activeConnProxy_;
+  unique_ptr<sdbus::IProxy> wirelessDeviceProxy_;
+  unique_ptr<sdbus::IProxy> accessPointProxy_;
+  mutex mutex_;
+  WifiStatus status_;
 };
-
-struct WifiInterface {
-  int ifindex = -1;
-  string ssid;
-};
-
-static int nl_error_handler(sockaddr_nl *, nlmsgerr *err, void *arg) {
-  int *ret = static_cast<int *>(arg);
-  *ret = err->error;
-  return NL_STOP;
-}
-
-static int nl_finish_handler(nl_msg *, void *arg) {
-  int *ret = static_cast<int *>(arg);
-  *ret = 0;
-  return NL_SKIP;
-}
-
-static int nl_ack_handler(nl_msg *, void *arg) {
-  int *ret = static_cast<int *>(arg);
-  *ret = 0;
-  return NL_STOP;
-}
-
-static int nl_send_and_recv(Nl80211State &state, nl_msg *msg,
-                            nl_recvmsg_msg_cb_t valid_handler, void *arg) {
-  nl_cb *cb = nl_cb_alloc(NL_CB_DEFAULT);
-  if (!cb)
-    return -ENOMEM;
-
-  int ret = 1;
-  nl_cb_err(cb, NL_CB_CUSTOM, nl_error_handler, &ret);
-  nl_cb_set(cb, NL_CB_FINISH, NL_CB_CUSTOM, nl_finish_handler, &ret);
-  nl_cb_set(cb, NL_CB_ACK, NL_CB_CUSTOM, nl_ack_handler, &ret);
-  nl_cb_set(cb, NL_CB_VALID, NL_CB_CUSTOM, valid_handler, arg);
-
-  int send_ret = nl_send_auto(state.sock, msg);
-  if (send_ret < 0)
-    ret = send_ret;
-
-  while (ret > 0) {
-    int recv_ret = nl_recvmsgs(state.sock, cb);
-    if (recv_ret < 0)
-      ret = recv_ret;
-  }
-
-  nl_cb_put(cb);
-  return ret;
-}
-
-static bool nl80211_open(Nl80211State &state) {
-  state.sock = nl_socket_alloc();
-  if (!state.sock)
-    return false;
-
-  if (genl_connect(state.sock) < 0) {
-    nl_socket_free(state.sock);
-    state.sock = nullptr;
-    return false;
-  }
-
-  state.family_id = genl_ctrl_resolve(state.sock, "nl80211");
-  if (state.family_id < 0) {
-    nl_socket_free(state.sock);
-    state.sock = nullptr;
-    return false;
-  }
-
-  return true;
-}
-
-static void nl80211_close(Nl80211State &state) {
-  if (state.sock)
-    nl_socket_free(state.sock);
-  state.sock = nullptr;
-  state.family_id = -1;
-}
-
-static int wifi_interface_handler(nl_msg *msg, void *arg) {
-  auto *interfaces = static_cast<vector<WifiInterface> *>(arg);
-  genlmsghdr *gnlh = static_cast<genlmsghdr *>(nlmsg_data(nlmsg_hdr(msg)));
-  nlattr *attrs[NL80211_ATTR_MAX + 1];
-
-  if (nla_parse(attrs, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
-                genlmsg_attrlen(gnlh, 0), nullptr) < 0)
-    return NL_SKIP;
-
-  if (!attrs[NL80211_ATTR_IFINDEX] || !attrs[NL80211_ATTR_IFTYPE])
-    return NL_SKIP;
-
-  if (nla_get_u32(attrs[NL80211_ATTR_IFTYPE]) != NL80211_IFTYPE_STATION)
-    return NL_SKIP;
-
-  WifiInterface iface;
-  iface.ifindex = nla_get_u32(attrs[NL80211_ATTR_IFINDEX]);
-
-  if (attrs[NL80211_ATTR_SSID]) {
-    char *ssid = static_cast<char *>(nla_data(attrs[NL80211_ATTR_SSID]));
-    iface.ssid.assign(ssid, ssid + nla_len(attrs[NL80211_ATTR_SSID]));
-  }
-
-  interfaces->push_back(iface);
-  return NL_SKIP;
-}
-
-static vector<WifiInterface> get_wifi_interfaces(Nl80211State &state) {
-  vector<WifiInterface> interfaces;
-  nl_msg *msg = nlmsg_alloc();
-  if (!msg)
-    return interfaces;
-
-  genlmsg_put(msg, 0, 0, state.family_id, 0, NLM_F_DUMP,
-              NL80211_CMD_GET_INTERFACE, 0);
-  nl_send_and_recv(state, msg, wifi_interface_handler, &interfaces);
-  nlmsg_free(msg);
-  return interfaces;
-}
-
-struct SignalInfo {
-  int dbm = numeric_limits<int>::min();
-};
-
-static int station_signal_handler(nl_msg *msg, void *arg) {
-  auto *signal = static_cast<SignalInfo *>(arg);
-  genlmsghdr *gnlh = static_cast<genlmsghdr *>(nlmsg_data(nlmsg_hdr(msg)));
-  nlattr *attrs[NL80211_ATTR_MAX + 1];
-  nlattr *station[NL80211_STA_INFO_MAX + 1];
-
-  if (nla_parse(attrs, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
-                genlmsg_attrlen(gnlh, 0), nullptr) < 0)
-    return NL_SKIP;
-
-  if (!attrs[NL80211_ATTR_STA_INFO])
-    return NL_SKIP;
-
-  if (nla_parse_nested(station, NL80211_STA_INFO_MAX,
-                       attrs[NL80211_ATTR_STA_INFO], nullptr) < 0)
-    return NL_SKIP;
-
-  nlattr *signal_attr = station[NL80211_STA_INFO_SIGNAL_AVG]
-                            ? station[NL80211_STA_INFO_SIGNAL_AVG]
-                            : station[NL80211_STA_INFO_SIGNAL];
-  if (!signal_attr)
-    return NL_SKIP;
-
-  int dbm = static_cast<int8_t>(nla_get_u8(signal_attr));
-  if (dbm > signal->dbm)
-    signal->dbm = dbm;
-
-  return NL_SKIP;
-}
-
-static int signal_dbm_to_percent(int dbm) {
-  if (dbm <= -100)
-    return 0;
-  if (dbm >= -50)
-    return 100;
-  return (dbm + 100) * 2;
-}
-
-static int get_wifi_strength(Nl80211State &state, int ifindex) {
-  SignalInfo signal;
-  nl_msg *msg = nlmsg_alloc();
-  if (!msg)
-    return 0;
-
-  genlmsg_put(msg, 0, 0, state.family_id, 0, NLM_F_DUMP,
-              NL80211_CMD_GET_STATION, 0);
-  nla_put_u32(msg, NL80211_ATTR_IFINDEX, ifindex);
-  nl_send_and_recv(state, msg, station_signal_handler, &signal);
-  nlmsg_free(msg);
-
-  if (signal.dbm == numeric_limits<int>::min())
-    return 0;
-
-  return signal_dbm_to_percent(signal.dbm);
-}
 
 WifiStatus get_wifi_info() {
-  WifiStatus status;
-  Nl80211State state;
-
-  if (!nl80211_open(state))
-    return status;
-
-  vector<WifiInterface> interfaces = get_wifi_interfaces(state);
-  for (const WifiInterface &iface : interfaces) {
-    if (iface.ssid.empty())
-      continue;
-
-    status.ssid = iface.ssid;
-    status.strength = get_wifi_strength(state, iface.ifindex);
-    status.is_up = true;
-    break;
-  }
-
-  nl80211_close(state);
-  return status;
+  static NetworkManagerWifiMonitor monitor;
+  return monitor.status();
 }
 
 // --- Hardware Info Functions ---
@@ -579,32 +616,30 @@ MemInfo readMemInfo() {
   return mem;
 }
 
-string formatMemory(double kb) {
-  double val = kb;
-  string unit = "Ki";
-  if (val >= 1024 * 1024) {
-    val /= (1024 * 1024);
+// Previously getMemUsedStr/getMemUnitStr/getMemPercentStr each called
+// readMemInfo() independently, parsing /proc/meminfo three times (and
+// costing three separate thread-pool enqueues) every single tick. Now a
+// single read produces all three derived strings.
+struct MemStrs {
+  string used;
+  string unit;
+  int percent;
+};
+
+MemStrs getMemStrs() {
+  MemInfo mem = readMemInfo();
+  double used_kb = (double)mem.used();
+  string unit = "kB";
+  if (used_kb >= 1024.0 * 1024.0) {
+    used_kb /= 1024.0 * 1024.0;
     unit = "Gi";
-  } else if (val >= 1024) {
-    val /= 1024;
+  } else if (used_kb >= 1024.0) {
+    used_kb /= 1024.0;
     unit = "Mi";
   }
   stringstream ss;
-  ss << fixed << setprecision(1) << val;
-  return ss.str();
-}
-
-string getMemUsedStr() { return formatMemory(readMemInfo().used()); }
-string getMemUnitStr() {
-  double kb = readMemInfo().used();
-  if (kb >= 1024 * 1024)
-    return "Gi";
-  if (kb >= 1024)
-    return "Mi";
-  return "kB";
-}
-string getMemPercentStr() {
-  return to_string((int)round(readMemInfo().usedPercent()));
+  ss << fixed << setprecision(1) << used_kb;
+  return { ss.str(), unit, (int)round(mem.usedPercent()) };
 }
 
 // --- Text/Unicode Handling ---
@@ -679,111 +714,364 @@ string formatArtist(const string &artist) {
 // --- Status Components ---
 
 string clock_time() {
+  // The color-code wrapper around the clock never changes at runtime -
+  // build it once instead of re-concatenating several strings every tick.
+  static const string prefix = "^c" + black + "^ ^b" + darkblue + "^ 󱑆 ^c" +
+                                black + "^^b" + blue + "^ ";
+  static const string suffix = " ^d^^c" + blue + "^";
+
   time_t now = time(nullptr);
   tm *timeinfo = localtime(&now);
   char buffer[16];
   strftime(buffer, sizeof(buffer), "%H:%M", timeinfo);
-  return "^c" + black + "^ ^b" + darkblue + "^ 󱑆 ^c" + black + "^^b" + blue +
-         "^ " + string(buffer) + " ^d^^c" + blue + "^";
+  return prefix + buffer + suffix;
 }
 
 string kb_layout() {
-  string layout =
-      trim(exec("xkblayout-state print \"%s\" | tr '[:lower:]' '[:upper:]'"));
+  // Same precompute trick as clock_time(). Also drop the shell pipe into
+  // `tr` - do the uppercasing in C++ instead of forking a second process
+  // for it every tick.
+  static const string prefix = "^c" + black + "^ ^b" + blue + "^ ";
+  static const string suffix = " ^d^^c" + blue + "^";
+
+  string layout = trim(exec("xkblayout-state print \"%s\""));
   if (layout.empty())
     return "";
-  return "^c" + black + "^ ^b" + blue + "^ " + layout + " ^d^^c" + blue + "^";
+  transform(layout.begin(), layout.end(), layout.begin(), ::toupper);
+  return prefix + layout + suffix;
 }
 
 // --- DBus Player Logic ---
 
-string get_playing_player() {
-  try {
-    auto &connection = getBus();
-    auto proxy = sdbus::createProxy(connection,
-                                    sdbus::ServiceName{"org.freedesktop.DBus"},
-                                    sdbus::ObjectPath{"/org/freedesktop/DBus"});
-    vector<string> names;
-    proxy->callMethod("ListNames")
-        .onInterface("org.freedesktop.DBus")
-        .storeResultsTo(names);
-    for (const auto &name : names) {
-      if (name.find("org.mpris.MediaPlayer2.") != 0)
-        continue;
-      auto playerProxy =
-          sdbus::createProxy(connection, sdbus::ServiceName{name},
-                             sdbus::ObjectPath{"/org/mpris/MediaPlayer2"});
-      sdbus::Variant vStatus;
-      playerProxy->callMethod("Get")
-          .onInterface("org.freedesktop.DBus.Properties")
-          .withArguments("org.mpris.MediaPlayer2.Player", "PlaybackStatus")
-          .storeResultsTo(vStatus);
-      if (vStatus.get<string>() == "Playing")
-        return name;
+struct MprisSnapshot {
+  string player;
+  string playback_status = "Stopped";
+  string title = "Unknown Track";
+  string artist = "Unknown Artist";
+  int64_t position_us = 0;
+  int64_t length_us = 0;
+  chrono::steady_clock::time_point position_updated =
+      chrono::steady_clock::now();
+};
+
+class MprisMonitor {
+public:
+  MprisMonitor() {
+    try {
+      connection_ = sdbus::createSessionBusConnection();
+      dbusProxy_ = sdbus::createProxy(
+          *connection_, sdbus::ServiceName{"org.freedesktop.DBus"},
+          sdbus::ObjectPath{"/org/freedesktop/DBus"});
+      dbusProxy_->uponSignal("NameOwnerChanged")
+          .onInterface("org.freedesktop.DBus")
+          .call([this](const string &name, const string &oldOwner,
+                       const string &newOwner) {
+            handleNameOwnerChanged(name, oldOwner, newOwner);
+          });
+
+      vector<string> names;
+      dbusProxy_->callMethod("ListNames")
+          .onInterface("org.freedesktop.DBus")
+          .storeResultsTo(names);
+      for (const auto &name : names) {
+        if (isMprisName(name))
+          addPlayer(name);
+      }
+      chooseCurrentPlayer();
+      connection_->enterEventLoopAsync();
+    } catch (...) {
     }
-  } catch (...) {
   }
-  return "";
+
+  string currentPlayer() {
+    lock_guard<mutex> lock(mutex_);
+    return snapshot_.playback_status == "Playing" ? snapshot_.player : "";
+  }
+
+  MprisSnapshot snapshotFor(const string &player) {
+    lock_guard<mutex> lock(mutex_);
+    auto current = players_.find(player);
+    if (current == players_.end() ||
+        current->second.playback_status != "Playing")
+      return {};
+
+    advancePositionLocked(current->second);
+    copySnapshotLocked(player, current->second);
+    MprisSnapshot snapshot = snapshot_;
+    return snapshot;
+  }
+
+private:
+  struct PlayerState {
+    unique_ptr<sdbus::IProxy> proxy;
+    string playback_status = "Stopped";
+    string title = "Unknown Track";
+    string artist = "Unknown Artist";
+    int64_t position_us = 0;
+    int64_t length_us = 0;
+    chrono::steady_clock::time_point position_updated =
+        chrono::steady_clock::now();
+  };
+
+  static bool isMprisName(const string &name) {
+    return name.find("org.mpris.MediaPlayer2.") == 0;
+  }
+
+  template <typename T>
+  static T getPlayerProperty(sdbus::IProxy &proxy, const char *property) {
+    return getPlayerPropertyVariant(proxy, property).get<T>();
+  }
+
+  static sdbus::Variant getPlayerPropertyVariant(sdbus::IProxy &proxy,
+                                                 const char *property) {
+    sdbus::Variant value;
+    proxy.callMethod("Get")
+        .onInterface("org.freedesktop.DBus.Properties")
+        .withArguments("org.mpris.MediaPlayer2.Player", property)
+        .storeResultsTo(value);
+    return value;
+  }
+
+  static int64_t variantToInt64(const sdbus::Variant &value) {
+    try {
+      return value.get<int64_t>();
+    } catch (...) {
+      return static_cast<int64_t>(value.get<uint64_t>());
+    }
+  }
+
+  static string artistFromMetadata(map<string, sdbus::Variant> &metadata) {
+    auto it = metadata.find("xesam:artist");
+    if (it == metadata.end())
+      return "Unknown Artist";
+
+    try {
+      auto artists = it->second.get<vector<string>>();
+      if (!artists.empty())
+        return artists[0];
+    } catch (...) {
+      try {
+        return it->second.get<string>();
+      } catch (...) {
+      }
+    }
+    return "Unknown Artist";
+  }
+
+  static void applyMetadata(PlayerState &state,
+                            map<string, sdbus::Variant> metadata) {
+    auto title = metadata.find("xesam:title");
+    state.title = title != metadata.end() ? title->second.get<string>()
+                                          : "Unknown Track";
+    state.artist = artistFromMetadata(metadata);
+
+    auto length = metadata.find("mpris:length");
+    if (length != metadata.end())
+      state.length_us = variantToInt64(length->second);
+  }
+
+  void handleNameOwnerChanged(const string &name, const string &oldOwner,
+                              const string &newOwner) {
+    if (!isMprisName(name))
+      return;
+
+    if (oldOwner.empty() && !newOwner.empty()) {
+      addPlayer(name);
+      chooseCurrentPlayer();
+    } else if (!oldOwner.empty() && newOwner.empty()) {
+      {
+        lock_guard<mutex> lock(mutex_);
+        players_.erase(name);
+      }
+      chooseCurrentPlayer();
+    }
+  }
+
+  void addPlayer(const string &name) {
+    try {
+      PlayerState state;
+      state.proxy = sdbus::createProxy(
+          *connection_, sdbus::ServiceName{name},
+          sdbus::ObjectPath{"/org/mpris/MediaPlayer2"});
+      state.proxy->uponSignal("PropertiesChanged")
+          .onInterface("org.freedesktop.DBus.Properties")
+          .call([this, name](const sdbus::InterfaceName &interfaceName,
+                             const map<sdbus::PropertyName, sdbus::Variant>
+                                 &changedProperties,
+                             const vector<sdbus::PropertyName>
+                                 &invalidatedProperties) {
+            if (interfaceName == "org.mpris.MediaPlayer2.Player")
+              handlePlayerPropertiesChanged(name, changedProperties,
+                                            invalidatedProperties);
+          });
+      state.proxy->registerSignalHandler(
+          sdbus::InterfaceName{"org.mpris.MediaPlayer2.Player"},
+          sdbus::SignalName{"Seeked"}, [this, name](sdbus::Signal signal) {
+            try {
+              int64_t position = 0;
+              signal >> position;
+              handleSeeked(name, position);
+            } catch (...) {
+            }
+          });
+
+      state.playback_status =
+          getPlayerProperty<string>(*state.proxy, "PlaybackStatus");
+      applyMetadata(
+          state, getPlayerProperty<map<string, sdbus::Variant>>(*state.proxy,
+                                                                "Metadata"));
+      state.position_us =
+          variantToInt64(getPlayerPropertyVariant(*state.proxy, "Position"));
+      state.position_updated = chrono::steady_clock::now();
+
+      lock_guard<mutex> lock(mutex_);
+      players_[name] = std::move(state);
+    } catch (...) {
+      lock_guard<mutex> lock(mutex_);
+      players_.erase(name);
+    }
+  }
+
+  void handlePlayerPropertiesChanged(
+      const string &name,
+      const map<sdbus::PropertyName, sdbus::Variant> &changed,
+      const vector<sdbus::PropertyName> &invalidated) {
+    try {
+      {
+        lock_guard<mutex> lock(mutex_);
+        auto player = players_.find(name);
+        if (player == players_.end())
+          return;
+
+        advancePositionLocked(player->second);
+
+        auto playback = changed.find(sdbus::PropertyName{"PlaybackStatus"});
+        if (playback != changed.end())
+          player->second.playback_status = playback->second.get<string>();
+
+        auto metadata = changed.find(sdbus::PropertyName{"Metadata"});
+        if (metadata != changed.end())
+          applyMetadata(player->second,
+                        metadata->second.get<map<string, sdbus::Variant>>());
+
+        auto position = changed.find(sdbus::PropertyName{"Position"});
+        if (position != changed.end()) {
+          int64_t prop_pos = variantToInt64(position->second);
+          if (prop_pos >= player->second.position_us - 2000000) {
+            player->second.position_us = prop_pos;
+            player->second.position_updated = chrono::steady_clock::now();
+          }
+        }
+
+        if (find(invalidated.begin(), invalidated.end(),
+                 sdbus::PropertyName{"Position"}) != invalidated.end())
+          player->second.position_updated = chrono::steady_clock::now();
+      }
+      chooseCurrentPlayer();
+    } catch (...) {
+    }
+  }
+
+  void handleSeeked(const string &name, int64_t position) {
+    {
+      lock_guard<mutex> lock(mutex_);
+      auto player = players_.find(name);
+      if (player == players_.end())
+        return;
+      player->second.position_us = position;
+      player->second.position_updated = chrono::steady_clock::now();
+    }
+    chooseCurrentPlayer();
+  }
+
+  void chooseCurrentPlayer() {
+    lock_guard<mutex> lock(mutex_);
+
+    if (!snapshot_.player.empty()) {
+      auto current = players_.find(snapshot_.player);
+      if (current != players_.end() &&
+          current->second.playback_status == "Playing") {
+        advancePositionLocked(current->second);
+        copySnapshotLocked(snapshot_.player, current->second);
+        return;
+      }
+    }
+
+    for (auto &player : players_) {
+      if (player.second.playback_status == "Playing") {
+        advancePositionLocked(player.second);
+        copySnapshotLocked(player.first, player.second);
+        return;
+      }
+    }
+
+    snapshot_ = MprisSnapshot{};
+  }
+
+  void advancePositionLocked(PlayerState &state) {
+    if (state.playback_status != "Playing")
+      return;
+
+    auto now = chrono::steady_clock::now();
+    auto elapsed =
+        chrono::duration_cast<chrono::microseconds>(now -
+                                                    state.position_updated)
+            .count();
+    if (elapsed <= 0)
+      return;
+
+    state.position_us += elapsed;
+    if (state.length_us > 0)
+      state.position_us = min(state.position_us, state.length_us);
+    state.position_updated = now;
+  }
+
+  void copySnapshotLocked(const string &name, const PlayerState &state) {
+    snapshot_.player = name;
+    snapshot_.playback_status = state.playback_status;
+    snapshot_.title = state.title;
+    snapshot_.artist = state.artist;
+    snapshot_.position_us = state.position_us;
+    snapshot_.length_us = state.length_us;
+    snapshot_.position_updated = state.position_updated;
+  }
+
+  unique_ptr<sdbus::IConnection> connection_;
+  unique_ptr<sdbus::IProxy> dbusProxy_;
+  map<string, PlayerState> players_;
+  mutex mutex_;
+  MprisSnapshot snapshot_;
+};
+
+MprisMonitor &mpris_monitor() {
+  static MprisMonitor monitor;
+  return monitor;
+}
+
+string get_playing_player() {
+  return mpris_monitor().currentPlayer();
 }
 
 string player_info(const string &app) {
   try {
-    auto &connection = getBus();
-    auto proxy =
-        sdbus::createProxy(connection, sdbus::ServiceName{app},
-                           sdbus::ObjectPath{"/org/mpris/MediaPlayer2"});
-    sdbus::Variant vMetadata;
-    proxy->callMethod("Get")
-        .onInterface("org.freedesktop.DBus.Properties")
-        .withArguments("org.mpris.MediaPlayer2.Player", "Metadata")
-        .storeResultsTo(vMetadata);
-    auto metaMap = vMetadata.get<map<string, sdbus::Variant>>();
+    MprisSnapshot player = mpris_monitor().snapshotFor(app);
+    if (player.player.empty())
+      return "";
 
-    string rawArtist = "Unknown Artist";
-    if (metaMap.count("xesam:artist")) {
-      try {
-        rawArtist = metaMap["xesam:artist"].get<vector<string>>()[0];
-      } catch (...) {
-        try {
-          rawArtist = metaMap["xesam:artist"].get<string>();
-        } catch (...) {
-        }
-      }
-    }
     static string prevTitle;
-    string TITLE = metaMap.count("xesam:title")
-                       ? metaMap["xesam:title"].get<string>()
-                       : "Unknown Track";
+    string TITLE = player.title;
     if (TITLE != prevTitle) {
       g_scroll_index = 0;
       prevTitle = TITLE;
     }
-    string TEXT = "[" + formatArtist(rawArtist) + "]" + "  " + TITLE + " ";
-    TEXT = escape_quotes(TEXT);
+    // escape_quotes() is no longer needed here: it existed only to survive
+    // the old system("xsetroot -name \"...\"") shell round-trip. XStoreName
+    // writes the raw bytes directly, so escaping would now just leave a
+    // literal backslash in front of any quote character in the title.
+    string TEXT = "[" + formatArtist(player.artist) + "]" + "  " + TITLE + " ";
 
-    double pos = 0, len = 0;
-    try {
-      sdbus::Variant vPos;
-      proxy->callMethod("Get")
-          .onInterface("org.freedesktop.DBus.Properties")
-          .withArguments("org.mpris.MediaPlayer2.Player", "Position")
-          .storeResultsTo(vPos);
-      try {
-        pos = vPos.get<int64_t>() / 1000000.0;
-      } catch (...) {
-        pos = vPos.get<uint64_t>() / 1000000.0;
-      }
-    } catch (...) {
-    }
-
-    if (metaMap.count("mpris:length")) {
-      try {
-        len = metaMap["mpris:length"].get<int64_t>() / 1000000.0;
-      } catch (...) {
-        len = metaMap["mpris:length"].get<uint64_t>() / 1000000.0;
-      }
-    }
-
+    double pos = player.position_us / 1000000.0;
+    double len = player.length_us / 1000000.0;
     double percent = (len > 0.1) ? min((pos / len) * 100.0, 100.0) : 0.0;
     vector<string> chars = utf8ToChars(TEXT);
     if (chars.empty())
@@ -895,37 +1183,50 @@ string sav_fan_icon = "";
 
 
 string handle() {
-  string tlp = read_file("/run/tlp/last_pwr");
-  string governor = read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor");
-  int temp = readTemperatureCelsius();
-  bool performance_hot = governor == "performance" && temp > 79;
-  bool performance_cool = governor == "performance" && temp <= 79;
-  
-  if ( (tlp == "0 0" && performance_hot) && fan_st == 0){
-    //printf("%s",tlp);
-    setFan("0");
-    fan_st=1;
-  } else if (( tlp != "0 0" || (tlp == "0 0" && performance_cool)) && fan_st == 1 ){
-    //printf("%s",tlp);
-    setFan("2");
-    fan_st=0;
-  }
-  
-  auto f_wifi = pool.enqueue(get_wifi_info);
-  auto f_mem_used = pool.enqueue(getMemUsedStr);
-  auto f_mem_unit = pool.enqueue(getMemUnitStr);
-  auto f_mem_perc = pool.enqueue(getMemPercentStr);
-  auto f_cpu = pool.enqueue(getCpuUsageString);
-  auto f_player = pool.enqueue(get_playing_player);
-  auto f_kb = pool.enqueue(kb_layout);
+  auto f_wifi     = pool.enqueue(get_wifi_info);
+  auto f_mem      = pool.enqueue(getMemStrs);
+  auto f_cpu      = pool.enqueue(getCpuUsageString);
+  auto f_player   = pool.enqueue(get_playing_player);
+  auto f_kb       = pool.enqueue(kb_layout);
+  auto f_tlp      = pool.enqueue([] { return read_file("/run/tlp/last_pwr"); });
+  auto f_governor = pool.enqueue([] { return read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"); });
+  auto f_temp     = pool.enqueue(readTemperatureCelsius);
+  auto f_bat_fan  = pool.enqueue([] {
+    struct { int cap; int chg; string fan_icon; } r{};
+    string cs = read_file("/sys/class/power_supply/BAT0/capacity");
+    string ch = read_file("/sys/class/power_supply/AC0/online");
+    r.cap  = cs.empty() ? 0 : stoi(cs);
+    r.chg  = ch.empty() ? 0 : stoi(ch);
+    r.fan_icon = pwmPath.empty() ? "" : (read_file(pwmPath) == "2" ? "" : "");
+    return r;
+  });
 
-  WifiStatus wifi = f_wifi.get();
-  string free_output = f_mem_used.get();
-  string mem_unit = f_mem_unit.get();
-  int mem_percent = stoi(f_mem_perc.get());
-  string cpu_usage = f_cpu.get();
-  string player = f_player.get();
-  string kb = f_kb.get();
+  WifiStatus wifi    = f_wifi.get();
+  MemStrs mem        = f_mem.get();
+  string cpu_usage   = f_cpu.get();
+  string player      = f_player.get();
+  string kb          = f_kb.get();
+  string tlp         = f_tlp.get();
+  string governor    = f_governor.get();
+  int temp           = f_temp.get();
+  auto bat_fan       = f_bat_fan.get();
+
+  bool performance_hot  = governor == "performance" && temp > 79;
+  bool performance_cool = governor == "performance" && temp <= 72;
+  // cout << "TEMP : " << temp << endl;
+  // cout << "pwmPath : " << pwmPath << endl;
+  
+  if ((tlp == "0 0" && performance_hot) && fan_st == 0) {
+    setFan("0");
+    fan_st = 1;
+  } else if ((tlp != "0 0" || (tlp == "0 0" && performance_cool)) && fan_st == 1) {
+    setFan("2");
+    fan_st = 0;
+  }
+
+  string free_output = mem.used;
+  string mem_unit    = mem.unit;
+  int mem_percent    = mem.percent;
 
   string icon = (mem_percent < 40)   ? "󰾆"
                 : (mem_percent < 80) ? "󰾅"
@@ -946,22 +1247,16 @@ string handle() {
       wicon = "󰤟";
   }
   
-  string cap_s = read_file("/sys/class/power_supply/BAT0/capacity");
-  string chg_s = read_file("/sys/class/power_supply/AC0/online");
-  int capacity = cap_s.empty() ? 0 : stoi(cap_s);
-  int charging = chg_s.empty() ? 0 : stoi(chg_s);
+  int capacity = bat_fan.cap;
+  int charging = bat_fan.chg;
   string bicon = (charging == 1)    ? "󰂄"
                  : (capacity >= 90) ? "󰁹"
                  : (capacity >= 50) ? "󰁿"
                  : (capacity >= 20) ? "󰁼"
                                     : "󰁺";
 
-  if ( read_file(pwmPath) == "2" ){
-    sav_fan_icon="";
-  } else sav_fan_icon="";
-  if ( governor!="performance" ){
-    sav_perf_icon="";
-  } else sav_perf_icon="";
+  sav_fan_icon  = bat_fan.fan_icon;
+  sav_perf_icon = (governor == "performance") ? "" : "";
   
   string result;
 
@@ -970,9 +1265,9 @@ string handle() {
              icon + " ^d^";
     result += "^c" + black + "^ ^b" + blue + "^ " + wicon + " ^d^" +
               clock_time() + kb + "^c" + blue + "^ " + bicon;
-    if (dpy && DimMode == 0) {
+    if (DimMode == 0) {
       setAutoDimTimeout(dpy, 0);
-      DimMode = 0;
+      DimMode = 1;
     }
   } else {
     g_scroll_index = 0;
@@ -984,29 +1279,31 @@ string handle() {
     result += "^c" + black + "^ ^b" + blue + "^ " + wicon + "^c" + white +
               "^ ^b" + grey + "^ " + (wifi.is_up ? wifi.ssid : "Disconnected") +
               " ^d^" + clock_time() + kb;
-    if (dpy && DimMode == 1) {
+    if (DimMode == 1) {
       setAutoDimTimeout(dpy, 600);
-      DimMode = 1;
+      DimMode = 0;
     }
   }
   return result;
 }
 
 int main() {
-  bool print_to_stdout = getenv("BAR_PRINT_STDOUT") != nullptr;
-  if (!print_to_stdout)
-    dpy = getDisplay();
+  dpy = getDisplay();
+
+  // Resolve the fan sysfs path once at startup instead of walking the
+  // directory tree on every setFan() call.
+  fanPath = findFanPath();
+  if (!fanPath.empty())
+    pwmPath = fanPath + "/pwm1_enable";
 
   while (true) {
-    if (print_to_stdout || !read_fullscreen()) {
+    if (!read_fullscreen()) {
       string bar_output = "   " + handle() + "^b" + black + "^ ";
-      if (print_to_stdout) {
-        cout << bar_output << endl;
-        break;
-      } else {
-        string cmd = "xsetroot -name \"" + bar_output + "\"";
-        system(cmd.c_str());
-      }
+      // Set the root window name directly via Xlib instead of forking
+      // `sh -c "xsetroot -name ..."` every tick. xsetroot itself was just
+      // going to call XStoreName - do it in-process instead.
+      XStoreName(dpy, DefaultRootWindow(dpy), bar_output.c_str());
+      XFlush(dpy);
       usleep(700000);
     } else {
       usleep(5000000);

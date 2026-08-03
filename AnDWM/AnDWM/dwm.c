@@ -235,7 +235,7 @@ struct Client {
   unsigned int tags;
   int isfixed, iscentered, isfloating, isurgent, neverfocus, oldstate,
       isfullscreen;
-  int bypass_controlled;
+  int bypass_value;
   int isontop;
   int issticky;     /* sticky to background */
   int stickeystate; /* previous state before being sticky */
@@ -2839,7 +2839,7 @@ void manage(Window w, XWindowAttributes *wa) {
   c->h = c->oldh = wa->height;
   c->oldbw = wa->border_width;
   c->cfact = 1.0;
-  c->bypass_controlled = (get_bypass_compositor_value(c) != 2);
+  c->bypass_value = get_bypass_compositor_value(c);
 
   updateicon(c);
   updatetitle(c);
@@ -2921,7 +2921,7 @@ void manage(Window w, XWindowAttributes *wa) {
   else
     arrange(c->mon);
 
-  if (c->bypass_controlled && !c->isfullscreen)
+  if (c->bypass_value == 1 && !c->isfullscreen)
     set_bypass_compositor(c, 0);
 
   if (!HIDDEN(c))
@@ -3501,14 +3501,15 @@ void resizeclient(Client *c, int x, int y, int w, int h) {
 
 static Window ontopsibling(Monitor *m, Client *exclude) {
   Client *c;
-  Window last = None;
+  Client *lowest = NULL;
   if (!m)
     return None;
   for (c = m->stack; c; c = c->snext)
     if (c != exclude && c->isontop && !c->issticky && !c->isfullscreen &&
         ISVISIBLE(c))
-      last = c->win;
-  return last;
+      if (!lowest || c->isontop < lowest->isontop)
+        lowest = c;
+  return lowest ? lowest->win : None;
 }
 
 void resizemouse(const Arg *arg) {
@@ -3636,7 +3637,7 @@ void restack(Monitor *m) {
     if (c->issticky && c != stickywin && ISVISIBLE(c))
       XLowerWindow(dpy, c->win);
 
-  if (m->sel && !m->sel->issticky && (m->sel->isfloating || !m->lt[m->sellt]->arrange))
+  if (m->sel && !m->sel->issticky && !m->sel->isontop && (m->sel->isfloating || !m->lt[m->sellt]->arrange))
     XRaiseWindow(dpy, m->sel->win);
   if (m->lt[m->sellt]->arrange) {
     wc.stack_mode = Below;
@@ -3647,9 +3648,24 @@ void restack(Monitor *m) {
         wc.sibling = c->win;
       }
   }
-  Window isontop_sibling = None;
-  for (c = m->stack; c; c = c->snext) {
-    if (c->isontop && !c->issticky && !c->isfullscreen && ISVISIBLE(c)) {
+  {
+    Client *ontop_clients[256];
+    int ontop_count = 0;
+    for (c = m->stack; c; c = c->snext)
+      if (c->isontop && !c->issticky && !c->isfullscreen && ISVISIBLE(c))
+        ontop_clients[ontop_count++] = c;
+    for (int i = 1; i < ontop_count; i++) {
+      Client *key = ontop_clients[i];
+      int j = i - 1;
+      while (j >= 0 && ontop_clients[j]->isontop < key->isontop) {
+        ontop_clients[j + 1] = ontop_clients[j];
+        j--;
+      }
+      ontop_clients[j + 1] = key;
+    }
+    Window isontop_sibling = None;
+    for (int i = 0; i < ontop_count; i++) {
+      c = ontop_clients[i];
       if (isontop_sibling == None) {
         XRaiseWindow(dpy, c->win);
       } else {
@@ -4312,8 +4328,8 @@ void setfullscreen(Client *c, int fullscreen) {
     c->isfloating = 1;
     resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
     setwindowopacity(c);
-    if (c->bypass_controlled)
-      set_bypass_compositor(c, 1);
+    if (c->bypass_value == 1)
+      set_bypass_compositor(c, c->bypass_value);
     XRaiseWindow(dpy, c->win);
 
     /* hide all lower windows; preserve sticky windows if window has transparency */
@@ -4330,11 +4346,13 @@ void setfullscreen(Client *c, int fullscreen) {
       it->isautominimized = 0;
     }
   } else if (!fullscreen && c->isfullscreen) {
+    if (c->bypass_value == 1) {
+      set_bypass_compositor(c, 0);
+      XSync(dpy, False);
+    }
     XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
     clearwindowopacity(c);
-    if (c->bypass_controlled)
-      set_bypass_compositor(c, 0);
     c->isfullscreen = 0;
     c->isfloating = c->oldstate;
     c->bw = c->oldbw;
