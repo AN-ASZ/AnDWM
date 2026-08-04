@@ -23,6 +23,8 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include <X11/XKBlib.h>
+#include <X11/extensions/XKBrules.h>
 
 // --- Thread Pool ---
 class ThreadPool {
@@ -728,17 +730,42 @@ string clock_time() {
 }
 
 string kb_layout() {
-  // Same precompute trick as clock_time(). Also drop the shell pipe into
-  // `tr` - do the uppercasing in C++ instead of forking a second process
-  // for it every tick.
-  static const string prefix = "^c" + black + "^ ^b" + blue + "^ ";
-  static const string suffix = " ^d^^c" + blue + "^";
+    static const string prefix = "^c" + black + "^ ^b" + blue + "^ ";
+    static const string suffix = " ^d^^c" + blue + "^";
 
-  string layout = trim(exec("xkblayout-state print \"%s\""));
-  if (layout.empty())
-    return "";
-  transform(layout.begin(), layout.end(), layout.begin(), ::toupper);
-  return prefix + layout + suffix;
+    static Display *dpy = XOpenDisplay(nullptr);
+    if (!dpy)
+        return "";
+
+    static vector<string> layouts;
+    static bool initialized = false;
+
+    if (!initialized) {
+        initialized = true;
+
+        XkbRF_VarDefsRec vd{};
+        if (XkbRF_GetNamesProp(dpy, nullptr, &vd) && vd.layout) {
+            string s(vd.layout);
+            size_t start = 0;
+            size_t pos;
+
+            while ((pos = s.find(',', start)) != string::npos) {
+                layouts.emplace_back(s.substr(start, pos - start));
+                start = pos + 1;
+            }
+
+            layouts.emplace_back(s.substr(start));
+        }
+    }
+
+    XkbStateRec state;
+    if (XkbGetState(dpy, XkbUseCoreKbd, &state) != Success)
+        return "";
+
+    if (state.group >= layouts.size())
+        return "";
+
+    return prefix + layouts[state.group] + suffix;
 }
 
 // --- DBus Player Logic ---
@@ -1180,6 +1207,7 @@ bool removeTmp(const std::string& filename) {
 
 string sav_perf_icon = "";
 string sav_fan_icon = "";
+string sav_icon = "";
 
 
 string handle() {
@@ -1255,30 +1283,37 @@ string handle() {
                  : (capacity >= 20) ? "󰁼"
                                     : "󰁺";
 
-  sav_fan_icon  = bat_fan.fan_icon;
-  sav_perf_icon = (governor == "performance") ? "" : "";
+sav_fan_icon  = bat_fan.fan_icon;
+sav_perf_icon = (governor == "performance") ? "" : "";
+
+sav_icon =
+    (sav_fan_icon.empty() && sav_perf_icon.empty())
+        ? ""
+        : "  " + sav_fan_icon +
+          (sav_fan_icon.empty() || sav_perf_icon.empty() ? "" : " ") +
+          sav_perf_icon;
   
   string result;
 
   if (!player.empty()) {
-    result = player_info(player) + "^c" + t_color + "^ ^b" + blue + "^ " +
+    result = "^c" + green + "^" + sav_icon + " " + player_info(player) + "^c" + t_color + "^ ^b" + blue + "^ " +
              icon + " ^d^";
     result += "^c" + black + "^ ^b" + blue + "^ " + wicon + " ^d^" +
-              clock_time() + kb + "^c" + blue + "^ " + bicon;
+               "^c" + blue + "^ " + bicon;
     if (DimMode == 0) {
       setAutoDimTimeout(dpy, 0);
       DimMode = 1;
     }
   } else {
     g_scroll_index = 0;
-    result = "^c" + grey + "^" + sav_fan_icon + " " + sav_perf_icon + "  ^c" + blue + "^" + bicon + " " + to_string(capacity) + "%^c" +
+    result = "^c" + green + "^" + sav_icon + "  ^c" + blue + "^" + bicon + " " + to_string(capacity) + "%^c" +
              black + "^ ^b" + green + "^ ^c" + white + "^ ^b" + grey + "^ " +
              cpu_usage + "% ^d^";
     result += "^c" + t_color + "^ ^b" + green + "^ " + icon + "^c" + white +
               "^ ^b" + grey + "^ " + free_output + mem_unit + " ^d^";
     result += "^c" + black + "^ ^b" + blue + "^ " + wicon + "^c" + white +
               "^ ^b" + grey + "^ " + (wifi.is_up ? wifi.ssid : "Disconnected") +
-              " ^d^" + clock_time() + kb;
+              " ^d^";
     if (DimMode == 1) {
       setAutoDimTimeout(dpy, 600);
       DimMode = 0;
@@ -1298,7 +1333,7 @@ int main() {
 
   while (true) {
     if (!read_fullscreen()) {
-      string bar_output = "   " + handle() + "^b" + black + "^ ";
+      string bar_output = handle() + "^b" + black + "^ ";
       // Set the root window name directly via Xlib instead of forking
       // `sh -c "xsetroot -name ..."` every tick. xsetroot itself was just
       // going to call XStoreName - do it in-process instead.

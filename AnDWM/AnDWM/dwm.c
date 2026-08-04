@@ -319,6 +319,8 @@ static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static Monitor *createmon(void);
 static void cyclelayout(const Arg *arg);
+static unsigned int clockwidth(void);
+static unsigned int kblayoutwidth(void);
 static void destroynotify(XEvent *e);
 static void detach(Client *c);
 static void detachstack(Client *c);
@@ -407,6 +409,7 @@ static void show(Client *c);
 static void showhide(Client *c);
 static void showtagpreview(int tag);
 static void spawn(const Arg *arg);
+static unsigned int statuswidth(char *text);
 static void switchtag(void);
 static Monitor *systraytomon(Monitor *m);
 static void tabmode(const Arg *arg);
@@ -433,6 +436,7 @@ static void updatebarpos(Monitor *m);
 static void updatebars(void);
 static void updatepreview(void);
 static void updateclientlist(void);
+static void updateclock(void);
 static int updategeom(void);
 static void updatenumlockmask(void);
 static void updatesizehints(Client *c);
@@ -460,6 +464,8 @@ static void alttab(const Arg *arg);
 static Systray *systray = NULL;
 static const char broken[] = "broken";
 static char stext[1024];
+static char clockstr[8] = "00:00";
+static char kbstr[16] = "us";
 static int screen;
 static int sw, sh; /* X display screen geometry width, height */
 static int bh;     /* bar height */
@@ -533,6 +539,10 @@ struct Monitor {
   Client *stack;
   Monitor *next;
   Window barwin;
+  Window bartitlewin;
+  Window barcenterwin;
+  Window barkbwin;
+  Window barrightwin;
   Window tabwin;
   Window tagwin;
   Window sidebarwin;
@@ -761,9 +771,9 @@ void buttonpress(XEvent *e) {
       click = ClkLtSymbol;
       goto execute_handler;
     }
-
-    x += TEXTW(selmon->ltsymbol);
-
+    click = ClkWinTitle;
+  } else if (ev->window == selmon->bartitlewin) {
+    x = 0;
     for (i = 0; i < LENGTH(launchers); i++) {
       x += TEXTW(launchers[i].name);
 
@@ -775,10 +785,14 @@ void buttonpress(XEvent *e) {
       }
     }
 
-    if (ev->x > selmon->ww - (int)TEXTW(stext))
-      click = ClkStatusText;
-    else
-      click = ClkWinTitle;
+    /* the remaining area of the title bar is the app icon + app name */
+    click = ClkWinTitle;
+  } else if (ev->window == selmon->barrightwin) {
+    click = ClkStatusText;
+  } else if (ev->window == selmon->barcenterwin) {
+    click = ClkRootWin;
+  } else if (ev->window == selmon->barkbwin) {
+    click = ClkRootWin;
   }
 
   if (ev->window == selmon->tabwin) {
@@ -918,6 +932,14 @@ void cleanupmon(Monitor *mon) {
   }
   XUnmapWindow(dpy, mon->barwin);
   XDestroyWindow(dpy, mon->barwin);
+  XUnmapWindow(dpy, mon->bartitlewin);
+  XDestroyWindow(dpy, mon->bartitlewin);
+  XUnmapWindow(dpy, mon->barcenterwin);
+  XDestroyWindow(dpy, mon->barcenterwin);
+  XUnmapWindow(dpy, mon->barkbwin);
+  XDestroyWindow(dpy, mon->barkbwin);
+  XUnmapWindow(dpy, mon->barrightwin);
+  XDestroyWindow(dpy, mon->barrightwin);
   XUnmapWindow(dpy, mon->tabwin);
   XDestroyWindow(dpy, mon->tabwin);
   XUnmapWindow(dpy, mon->tagwin);
@@ -1223,13 +1245,13 @@ Monitor *dirtomon(int dir) {
   return m;
 }
 
-int drawstatusbar(Monitor *m, int bh, char *stext) {
-  int ret, i, w, x, len;
+unsigned int statuswidth(char *stext) {
+  int i, w;
   short isCode = 0;
   char *text;
   char *p;
+  size_t len = strlen(stext) + 1;
 
-  len = strlen(stext) + 1;
   if (!(text = (char *)malloc(sizeof(char) * len)))
     die("malloc");
   p = text;
@@ -1258,22 +1280,33 @@ int drawstatusbar(Monitor *m, int bh, char *stext) {
     w += TEXTW(text) - lrpad;
   else
     isCode = 0;
-  text = p;
+  free(p);
 
-  w += horizpadbar;
-  if (floatbar) {
-    ret = x = m->ww - m->gappov * 2 - borderpx - w;
-    x = m->ww - m->gappov * 2 - borderpx - w - getsystraywidth();
-  } else {
-    ret = x = m->ww - borderpx - w;
-    x = m->ww - w - getsystraywidth();
-  }
+  return w + horizpadbar;
+}
+
+int drawstatusbar(Monitor *m, int bh, char *stext) {
+  int i, w, x, len;
+  short isCode = 0;
+  char *text;
+  char *p;
+
+  len = strlen(stext) + 1;
+  if (!(text = (char *)malloc(sizeof(char) * len)))
+    die("malloc");
+  p = text;
+  memcpy(text, stext, len);
+
+  w = statuswidth(stext);
+  x = horizpadbar / 2;
+
+  XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
+  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, w, bh);
 
   drw_setscheme(drw, scheme[LENGTH(colors)]);
   drw->scheme[ColFg] = scheme[SchemeNorm][ColFg];
   drw->scheme[ColBg] = scheme[SchemeNorm][ColBg];
-  drw_rect(drw, x, borderpx, w, bh, 1, 1);
-  x += horizpadbar / 2;
+  drw_rect(drw, 0, borderpx, w, bh, 1, 1);
 
   /* process status text */
   i = -1;
@@ -1337,7 +1370,7 @@ int drawstatusbar(Monitor *m, int bh, char *stext) {
   drw_setscheme(drw, scheme[SchemeNorm]);
   free(p);
 
-  return ret;
+  return statuswidth(stext);
 }
 
 void dragcfact(const Arg *arg) {
@@ -1650,50 +1683,139 @@ void dragmfact(const Arg *arg) {
     ;
 }
 
-void drawbar(Monitor *m) {
-  int x = 0, y = borderpx, w, sw = 0, stw = 0;
-  int bh_n = bh - borderpx * 2;
-  int mw;
-  if (floatbar) {
-    mw = m->ww - m->gappov * 2 - borderpx * 2;
-  } else {
-    mw = m->ww - borderpx * 2;
+static unsigned int tagsbarwidth(Monitor *m) {
+  unsigned int i, w = 0;
+  for (i = 0; i < LENGTH(tags); i++)
+    w += TEXTW(tags[i]);
+  return borderpx + w + TEXTW(m->ltsymbol);
+}
+
+static unsigned int bartitlewidth(Monitor *m, unsigned int budget) {
+  unsigned int i, w = 0;
+  for (i = 0; i < LENGTH(launchers); i++)
+    w += TEXTW(launchers[i].name);
+  if (m->sel) {
+    w += m->sel->icon ? m->sel->icw + ICONSPACING : 0;
+    w += drw_fontset_getwidth(drw, m->sel->name) + lrpad;
   }
+  return MIN(w, budget);
+}
+
+unsigned int clockwidth(void) {
+  return TEXTW(clockstr) - lrpad + 2 * clockpad;
+}
+
+void getkblayout(void) {
+  /* Read _XKB_RULES_NAMES to get raw layout codes like "us,th" */
+  Atom xkbRulesNames = XInternAtom(dpy, "_XKB_RULES_NAMES", True);
+  if (xkbRulesNames) {
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *prop = NULL;
+    if (XGetWindowProperty(dpy, root, xkbRulesNames, 0, 1024, False,
+                           XA_STRING, &actual_type, &actual_format,
+                           &nitems, &bytes_after, &prop) == Success
+        && actual_type == XA_STRING && nitems > 0) {
+      /* Prop contains: rules\0model\0layout\0variant\0options (null-separated) */
+      int entry = 0;
+      char *p = (char *)prop;
+      char *layout_start = NULL;
+      while (*p && entry < 3) {
+        if (entry == 2) {
+          layout_start = p;
+          break;
+        }
+        /* skip to next null-terminated string */
+        while (*p) p++;
+        p++; /* skip null */
+        entry++;
+      }
+      if (layout_start) {
+        /* layout_start now points to "us,th" or similar */
+        XkbStateRec state;
+        if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success) {
+          int group = state.group;
+          /* Split layout_start by comma and pick group index */
+          char *saveptr;
+          char *token;
+          int idx = 0;
+          char *tmp = strdup(layout_start);
+          if (tmp) {
+            token = strtok_r(tmp, ",", &saveptr);
+            while (token) {
+              if (idx == group) {
+                size_t len = strlen(token);
+                if (len < sizeof(kbstr))
+                  strcpy(kbstr, token);
+                break;
+              }
+              token = strtok_r(NULL, ",", &saveptr);
+              idx++;
+            }
+            free(tmp);
+          }
+        }
+      }
+      XFree(prop);
+    }
+  }
+  /* Fallback: if kbstr is empty */
+  if (kbstr[0] == '\0')
+    strcpy(kbstr, "us");
+}
+
+unsigned int kblayoutwidth(void) {
+  return TEXTW(kbstr) - lrpad + 2 * kblayoutpad;
+}
+
+static void barwidths(Monitor *m, unsigned int *tw, unsigned int *tlw,
+                      unsigned int *cw, unsigned int *kw, unsigned int *rw) {
+  unsigned int avail, barW, stw = 0, stgap = 0;
+  if (showsystray && m == systraytomon(m)) {
+    stw = getsystraywidth();
+    if (stw)
+      stgap = bargap;
+  }
+  barW = (floatbar ? m->ww - 2 * m->gappov : m->ww) - stw;
+  *rw = statuswidth(stext);
+  *cw = clockwidth();
+  *kw = kblayoutwidth();
+  *tw = tagsbarwidth(m);
+  avail = (barW > *tw + *rw + *cw + *kw + 4 * bargap + stgap)
+              ? barW - *tw - *rw - *cw - *kw - 4 * bargap - stgap
+              : 0;
+  *tlw = borderpx + bartitlewidth(m, avail > borderpx ? avail - borderpx : 0);
+  if (*tlw > avail)
+    *tlw = avail;
+}
+
+void drawbar(Monitor *m) {
+  int y = borderpx;
+  int bh_n = bh - borderpx * 2;
   int boxs = drw->fonts->h / 9;
   int boxw = drw->fonts->h / 6 + 2;
+  int x, w;
   unsigned int i, occ = 0, urg = 0;
+  unsigned int tw, tlw, cw, kw, rw;
   Client *c;
-
-  XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
-  if (floatbar) {
-    XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0,
-                   m->ww - m->gappov * 2, bh);
-  } else {
-    XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, m->ww, bh);
-  }
-
-  if (showsystray && m == systraytomon(m))
-    stw = getsystraywidth();
 
   if (!m->showbar)
     return;
 
-  /* draw status first so it can be overdrawn by tags later */
-  if (m == selmon) { /* status is only drawn on selected monitor */
-    sw = mw - drawstatusbar(m, bh_n, stext);
-  }
-
-  resizebarwin(m);
   for (c = m->clients; c; c = c->next) {
     occ |= (c->issticky ? c->oldtags : c->tags);
     if (c->isurgent)
       urg |= (c->issticky ? c->oldtags : c->tags);
   }
 
-  drw_setscheme(drw, scheme[SchemeNorm]);
-  drw_text(drw, x, 0, TEXTW(" "), bh, lrpad / 2, " ", 0);
-  x += TEXTW(" ");
+  barwidths(m, &tw, &tlw, &cw, &kw, &rw);
+  resizebarwin(m);
 
+  XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
+  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, tw, bh);
+
+  /* tags bar: tags + layout indicator, fixed size */
   x = borderpx;
   for (i = 0; i < LENGTH(tags); i++) {
     w = TEXTW(tags[i]);
@@ -1707,25 +1829,26 @@ void drawbar(Monitor *m) {
                        underneath both 'drw_setscheme' and 'drw_text' :) */
       drw_rect(drw, x + ulinepad, bh_n - ulinestroke - ulinevoffset,
                w - (ulinepad * 2), ulinestroke, 1, 0);
-    /*if (occ & 1 << i)
-      drw_rect(drw, x + boxs, y + boxs, boxw, boxw,
-               m == selmon && selmon->sel && selmon->sel->tags & 1 << i,
-               urg & 1 << i); */
     x += w;
   }
   w = TEXTW(m->ltsymbol);
   drw_setscheme(drw, scheme[SchemeLayout]);
-  x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
+  drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
+  drw_map(drw, m->barwin, 0, 0, tw, bh);
 
+  /* title bar: arch logo + app icon + app name, dynamic size */
+  XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
+  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, tlw, bh);
+  x = borderpx;
   for (i = 0; i < LENGTH(launchers); i++) {
     w = TEXTW(launchers[i].name);
-    drw_text(drw, x, 0, w, bh, lrpad / 2, launchers[i].name, urg & 1 << i);
+    drw_setscheme(drw, scheme[SchemeLayout]);
+    drw_text(drw, x, 0, w, bh, lrpad / 2, launchers[i].name, 0);
     x += w;
   }
-
-  w = floatbar ? mw + m->gappov * 2 - sw - stw - x : mw - sw - stw - x;
-  if (w > bh_n) {
-    if (m->sel) {
+  if (m->sel) {
+    w = tlw - x;
+    if (w > 0) {
       drw_setscheme(drw, scheme[m == selmon ? SchemeTitle : SchemeNorm]);
       drw_text(drw, x, 0, w, bh,
                lrpad / 2 + (m->sel->icon ? m->sel->icw + ICONSPACING : 0),
@@ -1735,16 +1858,31 @@ void drawbar(Monitor *m) {
                 m->sel->ich, m->sel->icon);
       if (m->sel->isfloating)
         drw_rect(drw, x + boxs, boxs, boxw, boxw, m->sel->isfixed, 0);
-    } else {
-      drw_setscheme(drw, scheme[SchemeNorm]);
-      if (floatbar) {
-        drw_rect(drw, x, y, w - m->gappov * 2, bh_n, 1, 1);
-      } else {
-        drw_rect(drw, x, y, w, bh_n, 1, 1);
-      }
     }
   }
-  drw_map(drw, m->barwin, 0, 0, m->ww - stw, bh);
+  drw_map(drw, m->bartitlewin, 0, 0, tlw, bh);
+
+  /* center bar: fixed-size 24h clock */
+  XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
+  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, cw, bh);
+  drw_setscheme(drw, scheme[m == selmon ? SchemeTitle : SchemeNorm]);
+  drw_rect(drw, 0, borderpx, cw, bh_n, 1, 1);
+  drw_text(drw, 0, borderpx + vertpadbar / 2, cw, bh - vertpadbar, clockpad,
+           clockstr, 0);
+  drw_map(drw, m->barcenterwin, 0, 0, cw, bh);
+
+  /* center bar: keyboard layout */
+  XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
+  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, kw, bh);
+  drw_setscheme(drw, scheme[m == selmon ? SchemeTitle : SchemeNorm]);
+  drw_rect(drw, 0, borderpx, kw, bh_n, 1, 1);
+  drw_text(drw, 0, borderpx + vertpadbar / 2, kw, bh - vertpadbar, kblayoutpad,
+           kbstr, 0);
+  drw_map(drw, m->barkbwin, 0, 0, kw, bh);
+
+  /* right bar: xsetroot status text */
+  drawstatusbar(m, bh_n, stext);
+  drw_map(drw, m->barrightwin, 0, 0, rw, bh);
 }
 
 static uint32_t prealpha(uint32_t p) {
@@ -2367,10 +2505,10 @@ long getstate(Window w) {
 unsigned int getsystraywidth() {
   unsigned int w = 0;
   Client *i;
-  if (showsystray)
+  if (showsystray && systray)
     for (i = systray->icons; i; w += i->w + systrayspacing, i = i->next)
       ;
-  return w ? w + systrayspacing : 1;
+  return w ? w + systrayspacing : 0;
 }
 
 int gettextprop(Window w, Atom atom, char *text, unsigned int size) {
@@ -3458,13 +3596,74 @@ void resize(Client *c, int x, int y, int w, int h, int interact) {
 }
 
 void resizebarwin(Monitor *m) {
-  unsigned int w = floatbar ? m->ww - 2 * m->gappov : m->ww;
-  if (showsystray && m == systraytomon(m))
-    w -= getsystraywidth();
-  if (floatbar) {
-    XMoveResizeWindow(dpy, m->barwin, m->wx + m->gappov, m->by, w, bh);
+  unsigned int tw, tlw, cw, kw, rw, stw = 0, stgap = 0;
+  int lx, rx, cx, kx, titlex, title_right, span, center_total;
+
+  if (showsystray && m == systraytomon(m)) {
+    stw = getsystraywidth();
+    if (stw)
+      stgap = bargap;
+  }
+
+  if (!m->showbar) {
+    XMoveResizeWindow(dpy, m->barwin, m->wx, m->by, 1, bh);
+    if (m->bartitlewin)
+      XMoveResizeWindow(dpy, m->bartitlewin, m->wx, m->by, 1, bh);
+    if (m->barcenterwin)
+      XMoveResizeWindow(dpy, m->barcenterwin, m->wx, m->by, 1, bh);
+    if (m->barkbwin)
+      XMoveResizeWindow(dpy, m->barkbwin, m->wx, m->by, 1, bh);
+    if (m->barrightwin)
+      XMoveResizeWindow(dpy, m->barrightwin, m->wx, m->by, 1, bh);
+    return;
+  }
+
+  barwidths(m, &tw, &tlw, &cw, &kw, &rw);
+
+  lx = floatbar ? m->wx + m->gappov : m->wx;
+  rx = lx + (int)(floatbar ? m->ww - 2 * m->gappov : m->ww) - (int)stw -
+       (int)rw - (int)stgap;
+
+  XMoveResizeWindow(dpy, m->barwin, lx, m->by, tw, bh);
+
+  titlex = lx + (int)tw + bargap;
+  title_right = titlex + (int)tlw;
+  if (m->bartitlewin) {
+    XMoveResizeWindow(dpy, m->bartitlewin, titlex, m->by, tlw, bh);
+    XMapWindow(dpy, m->bartitlewin);
+  }
+
+  span = rx - title_right;
+  center_total = (int)cw + bargap + (int)kw;
+  if (span >= center_total) {
+    cx = title_right + (span - center_total) / 2;
+    kx = cx + (int)cw + bargap;
+    if (m->barcenterwin) {
+      XMoveResizeWindow(dpy, m->barcenterwin, cx, m->by, cw, bh);
+      XMapWindow(dpy, m->barcenterwin);
+    }
+    if (m->barkbwin) {
+      XMoveResizeWindow(dpy, m->barkbwin, kx, m->by, kw, bh);
+      XMapWindow(dpy, m->barkbwin);
+    }
+  } else if (span >= (int)cw) {
+    cx = title_right + (span - (int)cw) / 2;
+    if (m->barcenterwin) {
+      XMoveResizeWindow(dpy, m->barcenterwin, cx, m->by, cw, bh);
+      XMapWindow(dpy, m->barcenterwin);
+    }
+    if (m->barkbwin)
+      XUnmapWindow(dpy, m->barkbwin);
   } else {
-    XMoveResizeWindow(dpy, m->barwin, m->wx, m->by, w, bh);
+    if (m->barcenterwin)
+      XUnmapWindow(dpy, m->barcenterwin);
+    if (m->barkbwin)
+      XUnmapWindow(dpy, m->barkbwin);
+  }
+
+  if (m->barrightwin) {
+    XMoveResizeWindow(dpy, m->barrightwin, rx, m->by, rw, bh);
+    XMapWindow(dpy, m->barrightwin);
   }
 }
 
@@ -3769,6 +3968,8 @@ void run(void) {
               hideosidebar(selmon);
           }
           alt_held = new_alt;
+          getkblayout();
+          drawbars();
         }
         continue;
       }
@@ -3778,7 +3979,22 @@ void run(void) {
     }
     if (n == 0)
       checkminimize();
+    updateclock();
   }
+}
+
+void updateclock(void) {
+  time_t t = time(NULL);
+  struct tm *tm = localtime(&t);
+  char buf[8];
+
+  if (!tm)
+    return;
+  snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
+  if (strcmp(buf, clockstr) == 0)
+    return;
+  strcpy(clockstr, buf);
+  drawbars();
 }
 
 void scan(void) {
@@ -4562,8 +4778,10 @@ void setup(void) {
   XSelectInput(dpy, root, wa.event_mask);
   grabkeys();
   /* Xkb StateNotify for Alt sidebar tracking */
-  if (XkbQueryExtension(dpy, NULL, &xkb_event_base, NULL, NULL, NULL))
+  if (XkbQueryExtension(dpy, NULL, &xkb_event_base, NULL, NULL, NULL)) {
     XkbSelectEvents(dpy, XkbUseCoreKbd, XkbStateNotifyMask, XkbStateNotifyMask);
+    getkblayout();
+  }
   focus(NULL);
 }
 void setviewport(void) {
@@ -4984,9 +5202,31 @@ void updatebars(void) {
         DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
-    if (showsystray && m == systraytomon(m))
-      XMapRaised(dpy, systray->win);
     XMapRaised(dpy, m->barwin);
+    m->bartitlewin = XCreateWindow(
+        dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
+        CopyFromParent, DefaultVisual(dpy, screen),
+        CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
+    XDefineCursor(dpy, m->bartitlewin, cursor[CurNormal]->cursor);
+    XUnmapWindow(dpy, m->bartitlewin);
+    m->barcenterwin = XCreateWindow(
+        dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
+        CopyFromParent, DefaultVisual(dpy, screen),
+        CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
+    XDefineCursor(dpy, m->barcenterwin, cursor[CurNormal]->cursor);
+    XUnmapWindow(dpy, m->barcenterwin);
+    m->barkbwin = XCreateWindow(
+        dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
+        CopyFromParent, DefaultVisual(dpy, screen),
+        CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
+    XDefineCursor(dpy, m->barkbwin, cursor[CurNormal]->cursor);
+    XUnmapWindow(dpy, m->barkbwin);
+    m->barrightwin = XCreateWindow(
+        dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
+        CopyFromParent, DefaultVisual(dpy, screen),
+        CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
+    XDefineCursor(dpy, m->barrightwin, cursor[CurNormal]->cursor);
+    XUnmapWindow(dpy, m->barrightwin);
     m->tabwin = XCreateWindow(
         dpy, root, m->wx + m->gappov, m->ty, m->ww - 2 * m->gappov, th, 0,
         DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
@@ -5240,7 +5480,7 @@ void updatesizehints(Client *c) {
 void updatestatus(void) {
   if (!gettextprop(root, XA_WM_NAME, stext, sizeof(stext)))
     strcpy(stext, "dwm-" VERSION);
-  drawbar(selmon);
+  drawbars();
   updatesystray();
 }
 
@@ -5316,7 +5556,7 @@ void updatesystray(void) {
                     (unsigned char *)&netatom[NetSystemTrayOrientationHorz], 1);
     XChangeWindowAttributes(
         dpy, systray->win, CWEventMask | CWOverrideRedirect | CWBackPixel, &wa);
-    XMapRaised(dpy, systray->win);
+    XUnmapWindow(dpy, systray->win);
     XSetSelectionOwner(dpy, netatom[NetSystemTray], systray->win, CurrentTime);
     if (XGetSelectionOwner(dpy, netatom[NetSystemTray]) == systray->win) {
       sendevent(root, xatom[Manager], StructureNotifyMask, CurrentTime,
@@ -5341,7 +5581,11 @@ void updatesystray(void) {
     if (i->mon != m)
       i->mon = m;
   }
-  w = w ? w + systrayspacing : 1;
+  if (!w) {
+    XUnmapWindow(dpy, systray->win);
+    return;
+  }
+  w += systrayspacing;
   x -= w;
   XMoveResizeWindow(dpy, systray->win, x, m->by, w, bh);
   wc.x = x;
@@ -5473,7 +5717,8 @@ Monitor *wintomon(Window w) {
   if (w == root && getrootptr(&x, &y))
     return recttomon(x, y, 1, 1);
   for (m = mons; m; m = m->next)
-    if (w == m->barwin || w == m->tabwin)
+    if (w == m->barwin || w == m->bartitlewin || w == m->barcenterwin ||
+        w == m->barkbwin || w == m->barrightwin || w == m->tabwin)
       return m;
   if ((c = wintoclient(w)))
     return c->mon;
