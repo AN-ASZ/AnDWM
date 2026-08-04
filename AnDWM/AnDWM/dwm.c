@@ -55,6 +55,8 @@
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
 #include <stdbool.h>
+#include <pipewire/pipewire.h>
+#include <spa/param/audio/format-utils.h>
 
 #define SIDEBAR_WIDTH 64
 #define SIDEBAR_CLICK_THRESH 5
@@ -75,8 +77,23 @@ sendn(const char *msg)
 
 
 /* tile animation config */
-#define TILE_ANIM_STEPS 2   /* more = smoother, slower */
+#define TILE_ANIM_STEPS 2   /* more = smoother, smoother */
 #define TILE_ANIM_DELAY 500 /* microseconds */
+
+/* clock bar grow animation config */
+#define CLOCK_ANIMATE    1     /* 0 disables, bar stays fixed-size */
+#define CLOCK_ANIM_EXTRA 280   /* max px the bar grows past text width */
+#define PW_MONITOR_SINK  1     /* 1 = system audio (what you hear), 0 = mic */
+
+static volatile int clockanim_running = 0;
+static volatile unsigned int clockbar_dynw = 0; /* 0 = use fixed clockwidth() */
+static volatile Window clockbar_win = 0;
+static volatile int clockbar_cx = 0, clockbar_by = 0, clockbar_bh = 0;
+static volatile int clockbar_cw = 0;
+
+static struct pw_thread_loop *sound_loop = NULL;
+static struct pw_stream *sound_stream = NULL;
+static struct spa_audio_info sound_format;
 
 /* macros */
 #define BUTTONMASK (ButtonPressMask | ButtonReleaseMask)
@@ -387,6 +404,8 @@ static int sendevent(Window w, Atom proto, int m, long d0, long d1, long d2,
 static void sendmon(Client *c, Monitor *m);
 static void setclientstate(Client *c, long state);
 static void setclienttagprop(Client *c);
+static void sound_monitor_start(void);
+static void sound_monitor_stop(void);
 static void setnoanimation_async(Client *c, long val);
 static void setworkspaceanimation(Monitor *m, int val);
 static void setcurrentdesktop(void);
@@ -889,6 +908,9 @@ void cleanup(void) {
   Layout foo = {"", NULL};
   Monitor *m;
   size_t i;
+
+  if (CLOCK_ANIMATE)
+    sound_monitor_stop();
 
   view(&a);
   selmon->lt[selmon->sellt] = &foo;
@@ -1779,7 +1801,8 @@ static void barwidths(Monitor *m, unsigned int *tw, unsigned int *tlw,
   }
   barW = (floatbar ? m->ww - 2 * m->gappov : m->ww) - stw;
   *rw = statuswidth(stext);
-  *cw = clockwidth();
+  clockbar_cw = clockwidth();
+  *cw = (clockbar_dynw && m == selmon) ? clockbar_dynw : clockbar_cw;
   *kw = kblayoutwidth();
   *tw = tagsbarwidth(m);
   avail = (barW > *tw + *rw + *cw + *kw + 4 * bargap + stgap)
@@ -1800,8 +1823,11 @@ void drawbar(Monitor *m) {
   unsigned int tw, tlw, cw, kw, rw;
   Client *c;
 
-  if (!m->showbar)
+  if (!m->showbar) {
+    if (m == selmon)
+      clockbar_win = 0;
     return;
+  }
 
   for (c = m->clients; c; c = c->next) {
     occ |= (c->issticky ? c->oldtags : c->tags);
@@ -1862,14 +1888,17 @@ void drawbar(Monitor *m) {
   }
   drw_map(drw, m->bartitlewin, 0, 0, tlw, bh);
 
-  /* center bar: fixed-size 24h clock */
+  /* center bar: animated 24h clock (only on focused monitor) */
+  unsigned int dcw = (clockbar_dynw && m == selmon) ? clockbar_dynw : cw;
+  unsigned int tcw = clockbar_cw;
   XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
-  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, cw, bh);
+  XFillRectangle(drw->dpy, drw->drawable, drw->gc, 0, 0, dcw, bh);
   drw_setscheme(drw, scheme[m == selmon ? SchemeTitle : SchemeNorm]);
-  drw_rect(drw, 0, borderpx, cw, bh_n, 1, 1);
-  drw_text(drw, 0, borderpx + vertpadbar / 2, cw, bh - vertpadbar, clockpad,
-           clockstr, 0);
-  drw_map(drw, m->barcenterwin, 0, 0, cw, bh);
+  drw_rect(drw, 0, borderpx, dcw, bh_n, 1, 1);
+  drw_text(drw, dcw > tcw ? (int)((dcw - tcw) / 2) : 0,
+           borderpx + vertpadbar / 2, tcw, bh - vertpadbar, clockpad, clockstr,
+           0);
+  drw_map(drw, m->barcenterwin, 0, 0, dcw, bh);
 
   /* center bar: keyboard layout */
   XSetForeground(drw->dpy, drw->gc, clrborder.pixel);
@@ -3231,6 +3260,139 @@ setnoanimation_async(Client *c, long val)
   }
 }
 
+static void on_stream_param_changed(void *userdata, uint32_t id,
+                                   const struct spa_pod *param) {
+  if (param == NULL || id != SPA_PARAM_Format)
+    return;
+  if (spa_format_parse(param, &sound_format.media_type,
+                       &sound_format.media_subtype) < 0)
+    return;
+  if (sound_format.media_type != SPA_MEDIA_TYPE_audio ||
+      sound_format.media_subtype != SPA_MEDIA_SUBTYPE_raw)
+    return;
+  spa_format_audio_raw_parse(param, &sound_format.info.raw);
+}
+
+static void on_process(void *userdata) {
+  struct pw_buffer *b;
+  struct spa_buffer *buf;
+  float *samples, max;
+  uint32_t n, n_channels, n_samples;
+  unsigned int min, maxw, new_width;
+
+  if (!(b = pw_stream_dequeue_buffer(sound_stream)))
+    return;
+  buf = b->buffer;
+  if (!buf->datas[0].data) {
+    pw_stream_queue_buffer(sound_stream, b);
+    return;
+  }
+
+  n_channels = sound_format.info.raw.channels;
+  if (!n_channels) {
+    pw_stream_queue_buffer(sound_stream, b);
+    return;
+  }
+  n_samples = buf->datas[0].chunk->size / sizeof(float);
+
+  /* peak volume across all channels, raw like main.c */
+  samples = buf->datas[0].data;
+  max = 0.0f;
+  for (n = 0; n < n_samples; n++)
+    if (fabsf(samples[n]) > max)
+      max = fabsf(samples[n]);
+
+  if (max > 1.0f)
+    max = 1.0f;
+
+  min = clockbar_cw;
+  maxw = clockbar_cw + CLOCK_ANIM_EXTRA;
+  new_width = min + (unsigned int)(max * (maxw - min));
+  if (new_width < min)
+    new_width = min;
+  if (new_width > maxw)
+    new_width = maxw;
+  clockbar_dynw = new_width;
+
+  /* resize keeping the bar centered, like main.c */
+  if (clockbar_win) {
+    XResizeWindow(dpy, clockbar_win, new_width, clockbar_bh);
+    XMoveWindow(dpy, clockbar_win, clockbar_cx - (int)(new_width / 2),
+                clockbar_by);
+    XFlush(dpy);
+  }
+
+  pw_stream_queue_buffer(sound_stream, b);
+}
+
+static const struct pw_stream_events sound_stream_events = {
+    PW_VERSION_STREAM_EVENTS,
+    .param_changed = on_stream_param_changed,
+    .process = on_process,
+};
+
+static void sound_monitor_start(void) {
+  const struct spa_pod *params[1];
+  uint8_t buffer[1024];
+  struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+  struct pw_properties *props;
+
+  clockanim_running = 1;
+  pw_init(NULL, NULL);
+  if (!(sound_loop = pw_thread_loop_new("dwm-sound-bar", NULL))) {
+    pw_deinit();
+    clockanim_running = 0;
+    return;
+  }
+
+  props = pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio",
+                            PW_KEY_MEDIA_CATEGORY, "Capture",
+                            PW_KEY_MEDIA_ROLE, "Music", NULL);
+  if (!props) {
+    pw_thread_loop_destroy(sound_loop);
+    pw_deinit();
+    clockanim_running = 0;
+    return;
+  }
+  if (PW_MONITOR_SINK)
+    pw_properties_set(props, PW_KEY_STREAM_CAPTURE_SINK, "true");
+
+  sound_stream = pw_stream_new_simple(pw_thread_loop_get_loop(sound_loop),
+                                      "dwm-sound-bar", props,
+                                      &sound_stream_events, NULL);
+  if (!sound_stream) {
+    pw_thread_loop_destroy(sound_loop);
+    pw_deinit();
+    clockanim_running = 0;
+    return;
+  }
+
+  params[0] = spa_format_audio_raw_build(
+      &b, SPA_PARAM_EnumFormat,
+      &SPA_AUDIO_INFO_RAW_INIT(.format = SPA_AUDIO_FORMAT_F32));
+
+  pw_stream_connect(sound_stream, PW_DIRECTION_INPUT, PW_ID_ANY,
+                    PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS |
+                        PW_STREAM_FLAG_RT_PROCESS,
+                    params, 1);
+
+  pw_thread_loop_start(sound_loop);
+}
+
+static void sound_monitor_stop(void) {
+  if (sound_loop) {
+    pw_thread_loop_stop(sound_loop);
+    pw_stream_destroy(sound_stream);
+    pw_thread_loop_destroy(sound_loop);
+    sound_stream = NULL;
+    sound_loop = NULL;
+  }
+  if (clockanim_running) {
+    pw_deinit();
+    clockanim_running = 0;
+  }
+}
+
 void movemouse(const Arg *arg) {
   int x, y, nx, ny;
   int rel_x, rel_y; // offset from window corner to mouse
@@ -3615,50 +3777,63 @@ void resizebarwin(Monitor *m) {
       XMoveResizeWindow(dpy, m->barkbwin, m->wx, m->by, 1, bh);
     if (m->barrightwin)
       XMoveResizeWindow(dpy, m->barrightwin, m->wx, m->by, 1, bh);
+    if (m == selmon)
+      clockbar_win = 0;
     return;
   }
 
   barwidths(m, &tw, &tlw, &cw, &kw, &rw);
+  {
+    unsigned int dcw = (clockbar_dynw && m == selmon) ? clockbar_dynw : cw;
 
-  lx = floatbar ? m->wx + m->gappov : m->wx;
-  rx = lx + (int)(floatbar ? m->ww - 2 * m->gappov : m->ww) - (int)stw -
-       (int)rw - (int)stgap;
+    lx = floatbar ? m->wx + m->gappov : m->wx;
+    rx = lx + (int)(floatbar ? m->ww - 2 * m->gappov : m->ww) - (int)stw -
+         (int)rw - (int)stgap;
 
-  XMoveResizeWindow(dpy, m->barwin, lx, m->by, tw, bh);
+    XMoveResizeWindow(dpy, m->barwin, lx, m->by, tw, bh);
 
-  titlex = lx + (int)tw + bargap;
-  title_right = titlex + (int)tlw;
-  if (m->bartitlewin) {
-    XMoveResizeWindow(dpy, m->bartitlewin, titlex, m->by, tlw, bh);
-    XMapWindow(dpy, m->bartitlewin);
-  }
-
-  span = rx - title_right;
-  center_total = (int)cw + bargap + (int)kw;
-  if (span >= center_total) {
-    cx = title_right + (span - center_total) / 2;
-    kx = cx + (int)cw + bargap;
-    if (m->barcenterwin) {
-      XMoveResizeWindow(dpy, m->barcenterwin, cx, m->by, cw, bh);
-      XMapWindow(dpy, m->barcenterwin);
+    titlex = lx + (int)tw + bargap;
+    title_right = titlex + (int)tlw;
+    if (m->bartitlewin) {
+      XMoveResizeWindow(dpy, m->bartitlewin, titlex, m->by, tlw, bh);
+      XMapWindow(dpy, m->bartitlewin);
     }
-    if (m->barkbwin) {
-      XMoveResizeWindow(dpy, m->barkbwin, kx, m->by, kw, bh);
-      XMapWindow(dpy, m->barkbwin);
+
+    span = rx - title_right;
+    center_total = (int)dcw + bargap + (int)kw;
+    if (span >= center_total) {
+      cx = title_right + (span - center_total) / 2;
+      kx = cx + (int)dcw + bargap;
+      if (m->barcenterwin) {
+        XMoveResizeWindow(dpy, m->barcenterwin, cx, m->by, dcw, bh);
+        XMapWindow(dpy, m->barcenterwin);
+      }
+      if (m->barkbwin) {
+        XMoveResizeWindow(dpy, m->barkbwin, kx, m->by, kw, bh);
+        XMapWindow(dpy, m->barkbwin);
+      }
+    } else if (span >= (int)dcw) {
+      cx = title_right + (span - (int)dcw) / 2;
+      if (m->barcenterwin) {
+        XMoveResizeWindow(dpy, m->barcenterwin, cx, m->by, dcw, bh);
+        XMapWindow(dpy, m->barcenterwin);
+      }
+      if (m->barkbwin)
+        XUnmapWindow(dpy, m->barkbwin);
+    } else {
+      cx = 0;
+      if (m->barcenterwin)
+        XUnmapWindow(dpy, m->barcenterwin);
+      if (m->barkbwin)
+        XUnmapWindow(dpy, m->barkbwin);
     }
-  } else if (span >= (int)cw) {
-    cx = title_right + (span - (int)cw) / 2;
-    if (m->barcenterwin) {
-      XMoveResizeWindow(dpy, m->barcenterwin, cx, m->by, cw, bh);
-      XMapWindow(dpy, m->barcenterwin);
+
+    if (m == selmon) {
+      clockbar_win = (span >= (int)dcw) ? m->barcenterwin : 0;
+      clockbar_cx = cx + (int)(dcw / 2);
+      clockbar_by = m->by;
+      clockbar_bh = bh;
     }
-    if (m->barkbwin)
-      XUnmapWindow(dpy, m->barkbwin);
-  } else {
-    if (m->barcenterwin)
-      XUnmapWindow(dpy, m->barcenterwin);
-    if (m->barkbwin)
-      XUnmapWindow(dpy, m->barkbwin);
   }
 
   if (m->barrightwin) {
@@ -5803,6 +5978,8 @@ int main(int argc, char *argv[]) {
     die("pledge");
 #endif /* __OpenBSD__ */
   scan();
+  if (CLOCK_ANIMATE)
+    sound_monitor_start();
   run();
   cleanup();
   XCloseDisplay(dpy);
