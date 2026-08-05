@@ -22,6 +22,9 @@ static const int floatbar           = 1;        /* 1 means the bar will float(do
 static const int topbar             = 1;        /* 0 means bottom bar */
 static const int horizpadbar        = 6;
 static const int vertpadbar         = 12;
+static const int bargap             = 10;   /* space between the bars */
+static const int clockpad           = 24;   /* space before/after the clock text */
+static const int kblayoutpad        = 17;   /* padding inside the keyboard layout bar */
 static const int vertpadtab         = 35;
 static const int horizpadtabi       = 16;
 static const int horizpadtabo       = 16;
@@ -113,9 +116,10 @@ static const Rule rules[] = {
     { "Gimp",     NULL,       NULL,       0,            0,           1,           0,        -1 },
     { "Firefox",  NULL,       NULL,       1 << 8,       0,           0,           0,        -1 },
     { "eww",      NULL,       NULL,       0,            0,           1,           0,        -1 },
-    { "spectacle",NULL,       NULL,       0,            1,           1,           1,        -1 },
-    { "wired",    NULL,       NULL,       0,            0,           1,           1,        -1 },
-    { "highlight-pointer",    NULL,       NULL,       0,            0,           1,           1,        -1 },
+    { "spectacle",NULL,       NULL,       0,            1,           1,           10,       -1 },
+    { "wired",    NULL,       NULL,       0,            0,           1,           10,       -1 },
+    { "highlight-pointer",    NULL,       NULL,       0,            0,           1,           99,       -1 },
+    { "mpv",      NULL,       NULL,       0,            1,           1,           1,        -1 },
 
 };
 
@@ -127,6 +131,7 @@ static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen win
 
 static const char *const transparent_fullscreen_classes[] = {
     "kitty",
+    "mpv",
     NULL,  /* sentinel */
 };
 

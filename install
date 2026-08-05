@@ -203,8 +203,11 @@ mkdir -p bin
 
 g++ -Ofast -march=native cpp/bar.cpp \
     -o bin/bar \
+    $(pkg-config --cflags --libs libnl-3.0 libnl-genl-3.0) \
     -lX11 \
-    -lXfixes
+    -lXfixes \
+    -lXext \
+    -lsdbus-c++
 
 g++ cpp/bat.cpp \
     -o bin/bat \
