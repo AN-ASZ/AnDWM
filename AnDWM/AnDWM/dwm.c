@@ -5140,7 +5140,8 @@ void showhide(Client *c) {
     /* hide clients bottom up */
     showhide(c->snext);
     setclientstate(c, IconicState);
-    c->isautominimized = 1;
+    if (!HIDDEN(c))
+      c->isautominimized = 1;
     XUnmapWindow(dpy, c->win);
   }
 }
