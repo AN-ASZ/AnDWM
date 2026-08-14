@@ -77,15 +77,15 @@ sendn(const char *msg)
 
 
 /* tile animation config */
-#define TILE_ANIM_STEPS 2   /* more = smoother, smoother */
+#define TILE_ANIM_STEPS 1   /* more = smoother, smoother */
 #define TILE_ANIM_DELAY 500 /* microseconds */
 
 /* clock bar grow animation config */
 #define CLOCK_ANIMATE    1     /* 0 disables, bar stays fixed-size */
 #define CLOCK_ANIM_EXTRA 280   /* max px the bar grows past text width */
 #define PW_MONITOR_SINK  1     /* 1 = system audio (what you hear), 0 = mic */
-#define DRAW_SAMPLE_RATE 48000 /* draw cadence numerator */
-#define DRAW_QUANTUM     512   /* draw cadence denominator -> 93.75 Hz */
+#define DRAW_SAMPLE_RATE 44100 /* draw cadence numerator */
+#define DRAW_QUANTUM     2048   /* draw cadence denominator -> 93.75 Hz */
 
 static volatile int clockanim_running = 0;
 static volatile unsigned int clockbar_dynw = 0; /* 0 = use fixed clockwidth() */
@@ -3305,6 +3305,11 @@ static void on_process(void *userdata) {
     pw_stream_queue_buffer(sound_stream, b);
     return;
   }
+  /* frozen in fullscreen: node stays connected, no peak is computed */
+  if (fullscreen_st) {
+    pw_stream_queue_buffer(sound_stream, b);
+    return;
+  }
   n_samples = buf->datas[0].chunk->size / sizeof(float);
 
   /* peak volume across all channels, raw like main.c */
@@ -3316,8 +3321,9 @@ static void on_process(void *userdata) {
 
   if (max > 1.0f)
     max = 1.0f;
+  max = sqrtf(max); /* perceptual loudness mapping */
 
-  /* store the raw peak for the draw thread */
+  /* store the peak for the draw thread */
   clockbar_peak = max;
 
   pw_stream_queue_buffer(sound_stream, b);
@@ -3344,6 +3350,12 @@ static void *clock_draw_loop(void *data) {
     }
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
 
+    /* frozen in fullscreen: nothing is calculated or resized */
+    if (fullscreen_st) {
+      clockbar_dynw = 0;
+      continue;
+    }
+
     unsigned int min = clockbar_cw;
     unsigned int maxw = clockbar_cw + CLOCK_ANIM_EXTRA;
     unsigned int new_width =
@@ -3353,13 +3365,7 @@ static void *clock_draw_loop(void *data) {
     if (new_width > maxw)
       new_width = maxw;
 
-    /* keep the clock fixed while a fullscreen window is focused */
-    if (fullscreen_st) {
-      clockbar_dynw = 0;
-      new_width = clockbar_cw;
-    } else {
-      clockbar_dynw = new_width;
-    }
+    clockbar_dynw = new_width;
 
     /* resize keeping the bar centered, like main.c */
     if (clockbar_win) {
@@ -3932,23 +3938,31 @@ void resizebarwin(Monitor *m) {
     span = rx - title_right;
     if (span >= (int)fcw + 2 * bargap) {
       cx = title_right + (span - (int)fcw - 2 * bargap) / 2;
+      int clock_cx = cx + (int)(fcw + 2 * bargap) / 2;
+      /* never let the clock center be left of the monitor's center */
+      int monitor_center = m->wx + m->ww / 2;
+      if (clock_cx < monitor_center) {
+        clock_cx = monitor_center;
+        cx = clock_cx - (int)(fcw + 2 * bargap) / 2;
+      }
       if (m->barcenterwin) {
         XMoveResizeWindow(dpy, m->barcenterwin,
                           cx + (int)(fcw + 2 * bargap) / 2 - (int)dcw / 2,
                           m->by, dcw, bh);
         XMapWindow(dpy, m->barcenterwin);
       }
+      if (m == selmon) {
+        clockbar_win = m->barcenterwin;
+        clockbar_cx = clock_cx;
+        clockbar_by = m->by;
+        clockbar_bh = bh;
+      }
     } else {
       cx = 0;
       if (m->barcenterwin)
         XUnmapWindow(dpy, m->barcenterwin);
-    }
-
-    if (m == selmon) {
-      clockbar_win = (span >= (int)fcw + 2 * bargap) ? m->barcenterwin : 0;
-      clockbar_cx = cx + (int)(fcw + 2 * bargap) / 2;
-      clockbar_by = m->by;
-      clockbar_bh = bh;
+      if (m == selmon)
+        clockbar_win = 0;
     }
   }
 
