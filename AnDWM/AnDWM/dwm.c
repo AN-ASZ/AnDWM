@@ -372,7 +372,6 @@ static void focusin(XEvent *e);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static void focuswin(const Arg *arg);
-static void focusunderpointer(void);
 static Atom getatomprop(Client *c, Atom prop);
 static Picture geticonprop(Window w, unsigned int *icw, unsigned int *ich, unsigned int *pw, unsigned int *ph);
 static int getrootptr(int *x, int *y);
@@ -400,7 +399,6 @@ static void propertynotify(XEvent *e);
 static void restart(const Arg *arg);
 static Client *recttoclient(int x, int y, int w, int h);
 static Monitor *recttomon(int x, int y, int w, int h);
-static Client *clientfromwin(Window w);
 static void removesystrayicon(Client *i);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
@@ -730,10 +728,9 @@ void arrange(Monitor *m) {
   if (m) {
     arrangemon(m);
     restack(m);
-  } else
+  }   else
     for (m = mons; m; m = m->next)
       arrangemon(m);
-  focusunderpointer();
 }
 
 void arrangemon(Monitor *m) {
@@ -882,7 +879,7 @@ void buttonpress(XEvent *e) {
           CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state)) {
         clientbinding = 1;
         break;
-      }
+    }
     XAllowEvents(dpy, clientbinding ? AsyncPointer : ReplayPointer, CurrentTime);
     if (clientbinding) {
       selmon = c->mon;
@@ -1061,8 +1058,8 @@ void clientmessage(XEvent *e) {
                         || (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ &&
                             !c->isfullscreen)));
   } else if (cme->message_type == netatom[NetActiveWindow]) {
-    if (c != selmon->sel && !c->isurgent)
-      seturgent(c, 1);
+    if (c != selmon->sel)
+      focus(c);
   }
 }
 
@@ -2483,48 +2480,6 @@ int getrootptr(int *x, int *y) {
   Window dummy;
 
   return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
-}
-
-/* Resolve a managed client from an arbitrary descendant window (true window
- * under the pointer). recttoclient() only considers tiled clients, which
- * desynchronised border/focus from the actual top window when floats or
- * stacked tiled clients overlapped. */
-static Client *clientfromwin(Window w) {
-  Client *c;
-  Window parent, rootret, *children = NULL;
-  unsigned int n;
-
-  while (w && w != root) {
-    if ((c = wintoclient(w)))
-      return c;
-    children = NULL;
-    if (!XQueryTree(dpy, w, &rootret, &parent, &children, &n))
-      break;
-    if (children)
-      XFree(children);
-    w = parent;
-  }
-  return NULL;
-}
-
-void focusunderpointer(void) {
-  int x, y;
-  int di;
-  unsigned int dui;
-  Window rootret, child;
-  Client *c;
-  Monitor *m;
-
-  if (!XQueryPointer(dpy, root, &rootret, &child, &x, &y, &di, &di, &dui))
-    return;
-  if ((m = recttomon(x, y, 1, 1)) && m != selmon) {
-    unfocus(selmon->sel, 1);
-    selmon = m;
-  }
-  c = clientfromwin(child);
-  if (!c)
-    c = recttoclient(x, y, 1, 1);
-  focus(c);
 }
 
 long getstate(Window w) {
@@ -5139,9 +5094,9 @@ void showhide(Client *c) {
       c->lastvisible = time(NULL);
     /* hide clients bottom up */
     showhide(c->snext);
-    setclientstate(c, IconicState);
     if (!HIDDEN(c))
       c->isautominimized = 1;
+    setclientstate(c, IconicState);
     XUnmapWindow(dpy, c->win);
   }
 }
@@ -5384,7 +5339,7 @@ void restorewin(const Arg *arg) {
   int i = hiddenWinStackTop;
   while (i > -1) {
     if (HIDDEN(hiddenWinStack[i]) &&
-        hiddenWinStack[i]->tags == selmon->tagset[selmon->seltags]) {
+        (hiddenWinStack[i]->tags & selmon->tagset[selmon->seltags])) {
       show(hiddenWinStack[i]);
       focus(hiddenWinStack[i]);
       restack(selmon);
@@ -5482,8 +5437,6 @@ void unmapnotify(XEvent *e) {
     else if (ISVISIBLE(c) && getstate(c->win) != IconicState)
       unmanage(c, 0);
   } else if ((c = wintosystrayicon(ev->window))) {
-    /* KLUDGE! sometimes icons occasionally unmap their windows, but do
-     * _not_ destroy them. We map those windows back */
     XMapRaised(dpy, c->win);
     updatesystray();
   }
@@ -5516,24 +5469,28 @@ void updatebars(void) {
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->bartitlewin, cursor[CurNormal]->cursor);
     XUnmapWindow(dpy, m->bartitlewin);
+    XSetClassHint(dpy, m->bartitlewin, &ch);
     m->barcenterwin = XCreateWindow(
         dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
         CopyFromParent, DefaultVisual(dpy, screen),
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->barcenterwin, cursor[CurNormal]->cursor);
     XUnmapWindow(dpy, m->barcenterwin);
+    XSetClassHint(dpy, m->barcenterwin, &ch);
     m->barkbwin = XCreateWindow(
         dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
         CopyFromParent, DefaultVisual(dpy, screen),
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->barkbwin, cursor[CurNormal]->cursor);
     XUnmapWindow(dpy, m->barkbwin);
+    XSetClassHint(dpy, m->barkbwin, &ch);
     m->barrightwin = XCreateWindow(
         dpy, root, m->wx, m->by, 1, bh, 0, DefaultDepth(dpy, screen),
         CopyFromParent, DefaultVisual(dpy, screen),
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->barrightwin, cursor[CurNormal]->cursor);
     XUnmapWindow(dpy, m->barrightwin);
+    XSetClassHint(dpy, m->barrightwin, &ch);
     /* keep the clock above the status bar so the animation can grow over it */
     {
       XWindowChanges wc = {0};
@@ -5559,6 +5516,7 @@ void updatebars(void) {
                     PropModeReplace, (unsigned char *)&netatom[NetBarLeft], 1);
     /* don't map here — only show when apps exist */
     m->sidebarvisible = 0;
+    XSetClassHint(dpy, m->sidebarwin, &ch);
     XSetClassHint(dpy, m->barwin, &ch);
   }
 }
