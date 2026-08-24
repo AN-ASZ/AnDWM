@@ -1057,9 +1057,6 @@ void clientmessage(XEvent *e) {
       setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
                         || (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ &&
                             !c->isfullscreen)));
-  } else if (cme->message_type == netatom[NetActiveWindow]) {
-    if (c != selmon->sel)
-      focus(c);
   }
 }
 
@@ -3046,7 +3043,6 @@ void manage(Window w, XWindowAttributes *wa) {
     setclientstate(c, NormalState);
   if (c->mon == selmon)
     unfocus(selmon->sel, 0);
-  c->mon->sel = c;
   updatetitle(c);
   if (strstr(c->name, "Picture in picture") ||
       strstr(c->name, "Picture-in-Picture")) {
@@ -3061,7 +3057,19 @@ void manage(Window w, XWindowAttributes *wa) {
 
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
-  focus(NULL);
+
+  /* Focus the client currently under the pointer. */
+  {
+    Window dummy, pointerwin;
+    int pointerx, pointery, pointerxwin, pointerywin;
+    unsigned int pointermask;
+    Client *pointerc = NULL;
+
+    if (XQueryPointer(dpy, root, &dummy, &pointerwin, &pointerx, &pointery,
+                      &pointerxwin, &pointerywin, &pointermask))
+      pointerc = wintoclient(pointerwin);
+    focus(pointerc);
+  }
 }
 
 void mappingnotify(XEvent *e) {
@@ -5119,6 +5127,7 @@ void showtagpreview(int tag) {
 
 void spawn(const Arg *arg) {
   struct sigaction sa;
+
   if (fork() == 0) {
     if (dpy)
       close(ConnectionNumber(dpy));
@@ -5425,6 +5434,19 @@ void unmanage(Client *c, int destroyed) {
   free(c);
   updateclientlist();
   arrange(m);
+
+  /* Focus the client currently under the pointer. */
+  {
+    Window dummy, pointerwin;
+    int pointerx, pointery, pointerxwin, pointerywin;
+    unsigned int pointermask;
+    Client *pointerc = NULL;
+
+    if (XQueryPointer(dpy, root, &dummy, &pointerwin, &pointerx, &pointery,
+                      &pointerxwin, &pointerywin, &pointermask))
+      pointerc = wintoclient(pointerwin);
+    focus(pointerc);
+  }
 }
 
 void unmapnotify(XEvent *e) {
