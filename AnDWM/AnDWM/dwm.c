@@ -263,7 +263,6 @@ struct Client {
   unsigned int tags;
   int isfixed, iscentered, isfloating, isurgent, neverfocus, oldstate,
       isfullscreen;
-  int bypass_value;
   int isontop;
   int issticky;     /* sticky to background */
   int stickeystate; /* previous state before being sticky */
@@ -421,8 +420,9 @@ static void setcurrentdesktop(void);
 static void setdesktopnames(void);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
-static int haswindowproperty(Client *c, Atom prop);
+static void sync_bypass_compositor(Client *c);
 static int get_bypass_compositor_value(Client *c);
+static int haswindowproperty(Client *c, Atom prop);
 static int window_has_transparency(Client *c);
 static void setwindowopacity(Client *c);
 static void clearwindowopacity(Client *c);
@@ -435,6 +435,7 @@ static void setviewport(void);
 static void seturgent(Client *c, int urg);
 static void show(Client *c);
 static void showhide(Client *c);
+static void restorefullscreenhidden(Monitor *m);
 static void showtagpreview(int tag);
 static void spawn(const Arg *arg);
 static unsigned int statuswidth(char *text);
@@ -720,11 +721,15 @@ int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact) {
 }
 
 void arrange(Monitor *m) {
-  if (m)
+  if (m) {
+    restorefullscreenhidden(m);
     showhide(m->stack);
-  else
-    for (m = mons; m; m = m->next)
+  } else {
+    for (m = mons; m; m = m->next) {
+      restorefullscreenhidden(m);
       showhide(m->stack);
+    }
+  }
   if (m) {
     arrangemon(m);
     restack(m);
@@ -2664,28 +2669,6 @@ int haswindowproperty(Client *c, Atom prop) {
   return exists;
 }
 
-int get_bypass_compositor_value(Client *c) {
-  Atom actual;
-  int format;
-  unsigned long n, extra;
-  unsigned char *data = NULL;
-
-  if (!c || !c->win || netatom[NetWMBypassCompositor] == None)
-    return 0;
-
-  if (XGetWindowProperty(dpy, c->win, netatom[NetWMBypassCompositor],
-                          0L, 1L, False, XA_CARDINAL,
-                          &actual, &format, &n, &extra, &data) == Success
-      && actual != None && data) {
-    unsigned long val = *(unsigned long *)data;
-    XFree(data);
-    return val;
-  }
-  if (data)
-    XFree(data);
-  return 0;
-}
-
 void
 set_bypass_compositor(Client *c, unsigned long val)
 {
@@ -2693,6 +2676,41 @@ set_bypass_compositor(Client *c, unsigned long val)
     return;
   XChangeProperty(dpy, c->win, netatom[NetWMBypassCompositor], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)&val, 1);
+}
+
+static int
+get_bypass_compositor_value(Client *c)
+{
+  Atom actual;
+  int format;
+  unsigned long n, extra;
+  unsigned char *data = NULL;
+  int value = 0;
+
+  if (!c || !c->win || netatom[NetWMBypassCompositor] == None)
+    return 0;
+
+  if (XGetWindowProperty(dpy, c->win, netatom[NetWMBypassCompositor],
+                         0L, 1L, False, XA_CARDINAL, &actual, &format, &n,
+                         &extra, &data) == Success && actual != None && data)
+    value = *(unsigned long *)data;
+  if (data)
+    XFree(data);
+  return value;
+}
+
+static void
+sync_bypass_compositor(Client *c)
+{
+  if (!c || !c->win || netatom[NetWMBypassCompositor] == None)
+    return;
+
+  if (c->isfullscreen) {
+    if (get_bypass_compositor_value(c) != 1)
+      set_bypass_compositor(c, 1);
+  } else {
+    XDeleteProperty(dpy, c->win, netatom[NetWMBypassCompositor]);
+  }
 }
 
 int window_has_transparency(Client *c) {
@@ -2971,8 +2989,6 @@ void manage(Window w, XWindowAttributes *wa) {
   c->h = c->oldh = wa->height;
   c->oldbw = wa->border_width;
   c->cfact = 1.0;
-  c->bypass_value = get_bypass_compositor_value(c);
-
   updateicon(c);
   updatetitle(c);
 
@@ -3052,8 +3068,7 @@ void manage(Window w, XWindowAttributes *wa) {
   else
     arrange(c->mon);
 
-  if (c->bypass_value == 1 && !c->isfullscreen)
-    set_bypass_compositor(c, 0);
+  sync_bypass_compositor(c);
 
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
@@ -3755,7 +3770,8 @@ void propertynotify(XEvent *e) {
   }
   if ((ev->window == root) && (ev->atom == XA_WM_NAME))
     updatestatus();
-  else if (ev->state == PropertyDelete)
+  else if (ev->state == PropertyDelete &&
+           ev->atom != netatom[NetWMBypassCompositor])
     return; /* ignore */
   else if ((c = wintoclient(ev->window))) {
     switch (ev->atom) {
@@ -3790,6 +3806,8 @@ void propertynotify(XEvent *e) {
 
     if (ev->atom == netatom[NetWMWindowType])
       updatewindowtype(c);
+    if (ev->atom == netatom[NetWMBypassCompositor])
+      sync_bypass_compositor(c);
   }
 }
 
@@ -4812,8 +4830,7 @@ void setfullscreen(Client *c, int fullscreen) {
     c->isfloating = 1;
     resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
     setwindowopacity(c);
-    if (c->bypass_value == 1)
-      set_bypass_compositor(c, c->bypass_value);
+    sync_bypass_compositor(c);
     XRaiseWindow(dpy, c->win);
 
     /* hide all lower windows; preserve sticky windows if window has transparency */
@@ -4830,14 +4847,11 @@ void setfullscreen(Client *c, int fullscreen) {
       it->isautominimized = 0;
     }
   } else if (!fullscreen && c->isfullscreen) {
-    if (c->bypass_value == 1) {
-      set_bypass_compositor(c, 0);
-      XSync(dpy, False);
-    }
     XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
                     PropModeReplace, (unsigned char *)0, 0);
     clearwindowopacity(c);
     c->isfullscreen = 0;
+    sync_bypass_compositor(c);
     c->isfloating = c->oldstate;
     c->bw = c->oldbw;
     c->x = c->oldx;
@@ -5079,6 +5093,37 @@ void show(Client *c) {
   c->isautominimized = 0;
   c->fshidden = 0;
   arrange(c->mon);
+}
+
+/* Fullscreen hides clients explicitly. Restore that state when the
+ * fullscreen client is no longer visible on the monitor, such as after a
+ * workspace or monitor move. */
+static void restorefullscreenhidden(Monitor *m) {
+  Client *c, *it;
+  int fullscreenvisible = 0;
+
+  for (c = m->clients; c; c = c->next)
+    if (c->isfullscreen && ISVISIBLE(c)) {
+      fullscreenvisible = 1;
+      break;
+    }
+
+  if (fullscreenvisible)
+    return;
+
+  for (it = m->clients; it; it = it->next) {
+    if (!it->fshidden)
+      continue;
+    it->fshidden = 0;
+    if (ISVISIBLE(it)) {
+      XMapWindow(dpy, it->win);
+      setclientstate(it, NormalState);
+      it->isautominimized = 0;
+    } else {
+      /* Let showhide map it when its workspace becomes visible. */
+      it->isautominimized = 1;
+    }
+  }
 }
 
 void showhide(Client *c) {
