@@ -191,6 +191,15 @@ static const Key keys[] = {
     { MODKEY,                           XK_period,  spawn,          SHCMD("rofi -modi \"emoji:rofimoji --action copy --hidden-descriptions\" -show emoji -theme /home/Hi/.config/AnDWM/rofi/moji.rasi") },
     { MODKEY|ShiftMask,                 XK_c,       spawn,          SHCMD("~/.config/AnDWM/scripts/sh/highlight-pointer.sh") },
 
+    // zoom keybind
+    { MODKEY,                           XK_equal,   spawn,          SHCMD("picom-zoom +0.2") },
+    { MODKEY,                           XK_minus,   spawn,          SHCMD("picom-zoom -0.2") },
+    { MODKEY,                           XK_BackSpace,   spawn,      SHCMD("picom-zoom 1") },
+    // extra zoom
+    { MODKEY|ControlMask,               XK_equal,   spawn,          SHCMD("picom-zoom +0.4") },
+    { MODKEY|ControlMask,               XK_minus,   spawn,          SHCMD("picom-zoom -0.4") },
+
+
     // toggle stuff
     { MODKEY,                           XK_space,   spawn,          {.v = togglekb } },
     { MODKEY|ControlMask,               XK_b,       togglebar,      {0} },

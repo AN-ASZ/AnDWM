@@ -60,6 +60,7 @@
 
 #define SIDEBAR_WIDTH 64
 #define SIDEBAR_CLICK_THRESH 5
+#define DIALOG_ONTOP_PRIORITY 1000
 
 #define FIFO_PATH "/tmp/dwm-pipn.fifo"
 static void
@@ -192,6 +193,7 @@ enum {
   NetWMFullscreen,
   NetWMStateHidden,
   NetActiveWindow,
+  NetWMSkipTaskbar,
   NetWMWindowType,
   NetWMWindowTypeDialog,
   NetWMWindowOpacity,
@@ -387,6 +389,7 @@ static void forcekillclient(const Arg *arg);
 static void manage(Window w, XWindowAttributes *wa);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
+static void mapnotify(XEvent *e);
 static void monocle(Monitor *m);
 static void motionnotify(XEvent *e);
 static void movemouse(const Arg *arg);
@@ -419,6 +422,7 @@ static void setworkspaceanimation(Monitor *m, int val);
 static void setcurrentdesktop(void);
 static void setdesktopnames(void);
 static void setfocus(Client *c);
+static int shouldminimize(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
 static void sync_bypass_compositor(Client *c);
 static int get_bypass_compositor_value(Client *c);
@@ -516,6 +520,7 @@ static void (*handler[LASTEvent])(XEvent *) = {
     [KeyRelease] = keypress,
     [MappingNotify] = mappingnotify,
     [MapRequest] = maprequest,
+    [MapNotify] = mapnotify,
     [MotionNotify] = motionnotify,
     [PropertyNotify] = propertynotify,
     [ResizeRequest] = resizerequest,
@@ -1062,6 +1067,9 @@ void clientmessage(XEvent *e) {
       setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
                         || (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ &&
                             !c->isfullscreen)));
+  } else if (cme->message_type == netatom[NetActiveWindow]) {
+    if (c != selmon->sel && !c->isurgent)
+      seturgent(c, 1);
   }
 }
 
@@ -2392,10 +2400,8 @@ void focus(Client *c) {
 
 /* there are some broken focus acquiring clients needing extra handling */
 void focusin(XEvent *e) {
-  XFocusChangeEvent *ev = &e->xfocus;
-
-  if (selmon->sel && ev->window != selmon->sel->win)
-    setfocus(selmon->sel);
+  /* Let applications, especially Java, manage focus within their window. */
+  (void)e;
 }
 
 void focusmon(const Arg *arg) {
@@ -2594,6 +2600,35 @@ void hide(Client *c) {
     focus(NULL);
     arrange(c->mon);
   }
+}
+
+int shouldminimize(Client *c) {
+  Atom *states = NULL;
+  Atom actual;
+  int format;
+  unsigned long n, extra;
+  unsigned long i;
+  int result = 1;
+
+  if (!c || !c->win)
+    return 0;
+
+  if (XGetWindowProperty(dpy, c->win, netatom[NetWMState], 0L, LONG_MAX,
+                         False, XA_ATOM, &actual, &format, &n, &extra,
+                         (unsigned char **)&states) != Success)
+    return 1;
+
+  /* Skip taskbar windows are often special/helper windows that should not be
+   * sent through the minimize state transition during tag changes. */
+  for (i = 0; i < n; i++)
+    if (states[i] == netatom[NetWMSkipTaskbar]) {
+      result = 0;
+      goto done;
+    }
+
+done:
+  XFree(states);
+  return result;
 }
 
 void incnmaster(const Arg *arg) {
@@ -3013,6 +3048,8 @@ void manage(Window w, XWindowAttributes *wa) {
   XSetWindowBorder(dpy, w, scheme[SchemeNorm][ColBorder].pixel);
   configure(c); /* propagates border_width, if size doesn't change */
   updatewindowtype(c);
+  if (trans != None)
+    c->isontop = DIALOG_ONTOP_PRIORITY;
   updatesizehints(c);
   updatewmhints(c);
   {
@@ -3073,6 +3110,13 @@ void manage(Window w, XWindowAttributes *wa) {
   if (!HIDDEN(c))
     XMapWindow(dpy, c->win);
 
+  /* Mapping can reset the window's position in the X stacking order. Keep
+   * managed dialogs above existing floating windows after they are visible. */
+  if (!HIDDEN(c) && c->isontop == DIALOG_ONTOP_PRIORITY) {
+    XRaiseWindow(dpy, c->win);
+    XSync(dpy, False);
+  }
+
   /* Focus the client currently under the pointer. */
   {
     Window dummy, pointerwin;
@@ -3110,6 +3154,18 @@ void maprequest(XEvent *e) {
     return;
   if (!wintoclient(ev->window))
     manage(ev->window, &wa);
+}
+
+void mapnotify(XEvent *e) {
+  XMapEvent *ev = &e->xmap;
+  XWindowAttributes wa;
+
+  /* Override-redirect windows (menus, popovers and tooltips) bypass manage().
+   * Raise them when they become visible so a floating client cannot cover
+   * the popup. */
+  if (ev->window != root && XGetWindowAttributes(dpy, ev->window, &wa) &&
+      wa.override_redirect)
+    XRaiseWindow(dpy, ev->window);
 }
 
 void monocle(Monitor *m) {
@@ -3778,9 +3834,11 @@ void propertynotify(XEvent *e) {
     default:
       break;
     case XA_WM_TRANSIENT_FOR:
-      if (!c->isfloating && (XGetTransientForHint(dpy, c->win, &trans)) &&
-          (c->isfloating = (wintoclient(trans)) != NULL))
+      if (XGetTransientForHint(dpy, c->win, &trans)) {
+        if ((c->isfloating = (wintoclient(trans)) != NULL))
+          c->isontop = DIALOG_ONTOP_PRIORITY;
         arrange(c->mon);
+      }
       break;
     case XA_WM_NORMAL_HINTS:
       c->hintsvalid = 0;
@@ -3804,8 +3862,10 @@ void propertynotify(XEvent *e) {
         drawbar(c->mon);
     }
 
-    if (ev->atom == netatom[NetWMWindowType])
+    if (ev->atom == netatom[NetWMWindowType]) {
       updatewindowtype(c);
+      arrange(c->mon);
+    }
     if (ev->atom == netatom[NetWMBypassCompositor])
       sync_bypass_compositor(c);
   }
@@ -4173,7 +4233,8 @@ void restack(Monitor *m) {
 
   for (m = mons; m; m = m->next)
     for (c = m->clients; c; c = c->next)
-      if (c != m->sel && !ISVISIBLE(c) && !HIDDEN(c) && !c->issticky && c->lastvisible > 0)
+      if (c != m->sel && !ISVISIBLE(c) && !HIDDEN(c) && !c->issticky &&
+          shouldminimize(c) && c->lastvisible > 0)
         if (now - c->lastvisible >= 1) {
           hide(c);
           c->isautominimized = 1;
@@ -4185,9 +4246,13 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
 
   /* Set windows leaving the view to IconicState */
   for (c = m->clients; c; c = c->next) {
-    if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky && !HIDDEN(c)) {
-      setclientstate(c, IconicState);
+    if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky &&
+        !HIDDEN(c)) {
+      int minimizable = shouldminimize(c);
+      if (minimizable)
+        setclientstate(c, IconicState);
       XUnmapWindow(dpy, c->win);
+      /* Track tag-hidden windows even when the client cannot minimize. */
       c->isautominimized = 1;
       if (c->lastvisible == 0)
         c->lastvisible = time(NULL);
@@ -4197,7 +4262,7 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
 
   /* Set windows entering the view to NormalState */
   for (c = m->clients; c; c = c->next) {
-    if ((c->tags & newtags) && !c->issticky && HIDDEN(c) && c->isautominimized) {
+    if ((c->tags & newtags) && !c->issticky && c->isautominimized) {
       XMapWindow(dpy, c->win);
       setclientstate(c, NormalState);
       c->isautominimized = 0;
@@ -4215,11 +4280,13 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
   do {
     all_done = 1;
     for (c = m->clients; c; c = c->next) {
-      if ((c->tags & newtags) && !c->issticky && getstate(c->win) == IconicState && c->isautominimized) {
+      if ((c->tags & newtags) && !c->issticky && shouldminimize(c) &&
+          getstate(c->win) == IconicState && c->isautominimized) {
         all_done = 0;
         break;
       }
-      if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky && getstate(c->win) == NormalState) {
+      if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky &&
+          shouldminimize(c) && getstate(c->win) == NormalState) {
         all_done = 0;
         break;
       }
@@ -4814,7 +4881,7 @@ void setfocus(Client *c) {
   sendevent(c->win, wmatom[WMTakeFocus], NoEventMask, wmatom[WMTakeFocus],
             CurrentTime, 0, 0, 0);
 
-  /* Apply cgroup settings to focused window */
+  /* Apply cgroup settings to the focused window. */
   cgwrite_focused(c->win);
 }
 
@@ -4988,6 +5055,8 @@ void setup(void) {
   netatom[NetWMStateHidden] =
       XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
   netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+  netatom[NetWMSkipTaskbar] =
+      XInternAtom(dpy, "_NET_WM_STATE_SKIP_TASKBAR", False);
   netatom[NetWMWindowTypeDialog] =
       XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
   netatom[NetWMWindowOpacity] =
@@ -5147,9 +5216,10 @@ void showhide(Client *c) {
       c->lastvisible = time(NULL);
     /* hide clients bottom up */
     showhide(c->snext);
-    if (!HIDDEN(c))
+    if (!HIDDEN(c) && shouldminimize(c))
       c->isautominimized = 1;
-    setclientstate(c, IconicState);
+    if (shouldminimize(c))
+      setclientstate(c, IconicState);
     XUnmapWindow(dpy, c->win);
   }
 }
@@ -5958,8 +6028,8 @@ void updatewindowtype(Client *c) {
   if (state == netatom[NetWMFullscreen])
     setfullscreen(c, 1);
   if (wtype == netatom[NetWMWindowTypeDialog]) {
-    c->iscentered = 1;
     c->isfloating = 1;
+    c->isontop = DIALOG_ONTOP_PRIORITY;
   }
 }
 
