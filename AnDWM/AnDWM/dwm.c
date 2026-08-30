@@ -86,7 +86,7 @@ sendn(const char *msg)
 #define CLOCK_ANIM_EXTRA 280   /* max px the bar grows past text width */
 #define PW_MONITOR_SINK  1     /* 1 = system audio (what you hear), 0 = mic */
 #define DRAW_SAMPLE_RATE 44100 /* draw cadence numerator */
-#define DRAW_QUANTUM     2048   /* draw cadence denominator -> 93.75 Hz */
+#define DRAW_QUANTUM     4096   /* draw cadence denominator -> 46.875 Hz */
 
 static volatile int clockanim_running = 0;
 static volatile unsigned int clockbar_dynw = 0; /* 0 = use fixed clockwidth() */
@@ -103,7 +103,6 @@ static struct pw_context *sound_context = NULL;
 static struct pw_core *sound_core = NULL;
 static struct spa_hook sound_core_listener;
 static struct spa_hook sound_stream_listener;
-static struct spa_source *sound_retry = NULL;
 static struct pw_stream *sound_stream = NULL;
 static struct spa_audio_info sound_format;
 
@@ -341,6 +340,7 @@ static void checkotherwm(void);
 static void cleanup(void);
 static void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int newtags);
 static void checkminimize(void);
+static time_t next_minimize_deadline(void);
 static void cleanupmon(Monitor *mon);
 static void clientmessage(XEvent *e);
 static void configure(Client *c);
@@ -3373,6 +3373,7 @@ static const struct pw_stream_events sound_stream_events = {
  * clock. raw peak, no smoothing, like main.c */
 static void *clock_draw_loop(void *data) {
   struct timespec ts;
+  unsigned int last_width = 0;
   uint64_t frame_ns = 1000000000ULL * DRAW_QUANTUM / DRAW_SAMPLE_RATE;
 
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -3402,11 +3403,12 @@ static void *clock_draw_loop(void *data) {
     clockbar_dynw = new_width;
 
     /* resize keeping the bar centered, like main.c */
-    if (clockbar_win) {
+    if (clockbar_win && new_width != last_width) {
       XResizeWindow(dpy, clockbar_win, new_width, clockbar_bh);
       XMoveWindow(dpy, clockbar_win, clockbar_cx - (int)(new_width / 2),
                   clockbar_by);
       XFlush(dpy);
+      last_width = new_width;
     }
   }
   return NULL;
@@ -3428,46 +3430,11 @@ static void sound_monitor_disconnect(void) {
   }
 }
 
-static void sound_monitor_retry(void *data, uint64_t expirations);
 static void sound_monitor_connect(void);
-static void sound_monitor_arm_retry(void);
-
-/* the PipeWire daemon went away (id == PW_ID_CORE); defer teardown out of the
- * core callback by arming the retry timer, which reconnects once it is back */
-static void on_core_error(void *data, uint32_t id, int seq, int res,
-                          const char *message) {
-  if (id == PW_ID_CORE)
-    sound_monitor_arm_retry();
-}
 
 static const struct pw_core_events sound_core_events = {
     PW_VERSION_CORE_EVENTS,
-    .error = on_core_error,
 };
-
-static void sound_monitor_retry(void *data, uint64_t expirations) {
-  struct pw_loop *loop = pw_thread_loop_get_loop(sound_loop);
-
-  if (sound_retry) {
-    pw_loop_destroy_source(loop, sound_retry);
-    sound_retry = NULL;
-  }
-  if (!clockanim_running)
-    return;
-  sound_monitor_disconnect();
-  sound_monitor_connect();
-}
-
-static void sound_monitor_arm_retry(void) {
-  struct timespec t = {0, 1000000000}; /* 1s */
-  struct pw_loop *loop = pw_thread_loop_get_loop(sound_loop);
-
-  if (!clockanim_running || sound_retry || !loop)
-    return;
-  sound_retry = pw_loop_add_timer(loop, sound_monitor_retry, NULL);
-  if (sound_retry)
-    pw_loop_update_timer(loop, sound_retry, &t, NULL, false);
-}
 
 static void sound_monitor_connect(void) {
   const struct spa_pod *params[1];
@@ -3515,7 +3482,6 @@ static void sound_monitor_connect(void) {
 error:
   pw_properties_free(props);
   sound_monitor_disconnect();
-  sound_monitor_arm_retry();
 }
 
 static void sound_monitor_start(void) {
@@ -3540,10 +3506,6 @@ static void sound_monitor_stop(void) {
   }
   if (sound_loop) {
     pw_thread_loop_stop(sound_loop);
-    if (sound_retry) {
-      pw_loop_destroy_source(pw_thread_loop_get_loop(sound_loop), sound_retry);
-      sound_retry = NULL;
-    }
     sound_monitor_disconnect();
     pw_thread_loop_destroy(sound_loop);
     sound_loop = NULL;
@@ -3838,6 +3800,7 @@ void propertynotify(XEvent *e) {
         if ((c->isfloating = (wintoclient(trans)) != NULL))
           c->isontop = DIALOG_ONTOP_PRIORITY;
         arrange(c->mon);
+        XRaiseWindow(dpy, c->win);
       }
       break;
     case XA_WM_NORMAL_HINTS:
@@ -3865,6 +3828,7 @@ void propertynotify(XEvent *e) {
     if (ev->atom == netatom[NetWMWindowType]) {
       updatewindowtype(c);
       arrange(c->mon);
+      XRaiseWindow(dpy, c->win);
     }
     if (ev->atom == netatom[NetWMBypassCompositor])
       sync_bypass_compositor(c);
@@ -4226,7 +4190,9 @@ void restack(Monitor *m) {
     ;
   if (m && m->sidebarvisible)
     XRaiseWindow(dpy, m->sidebarwin);
-}void checkminimize(void) {
+}
+
+void checkminimize(void) {
   Monitor *m;
   Client *c;
   time_t now = time(NULL);
@@ -4240,6 +4206,21 @@ void restack(Monitor *m) {
           c->isautominimized = 1;
         }
 }
+
+static time_t next_minimize_deadline(void) {
+  Monitor *m;
+  Client *c;
+  time_t deadline = 0;
+
+  for (m = mons; m; m = m->next)
+    for (c = m->clients; c; c = c->next)
+      if (c != m->sel && !ISVISIBLE(c) && !c->issticky &&
+          c->lastvisible > 0 && (!deadline || c->lastvisible + 1 < deadline))
+        deadline = c->lastvisible + 1;
+
+  return deadline;
+}
+
 void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int newtags) {
   Client *c;
   int changed = 0;
@@ -4299,13 +4280,23 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
 void run(void) {
   XEvent ev;
   int xfd = ConnectionNumber(dpy);
-  int n;
+  int timeout;
+  time_t next_clock_update = 0;
   struct pollfd pfd = {.fd = xfd, .events = POLLIN};
 
   /* main event loop */
   XSync(dpy, False);
+  updateclock();
+  next_clock_update = time(NULL) / 60 * 60 + 60;
   while (running) {
-    n = poll(&pfd, 1, 1000);
+    time_t now = time(NULL);
+    time_t minimize_deadline = next_minimize_deadline();
+    time_t next_deadline = now - now % 60 + 60;
+
+    if (minimize_deadline && minimize_deadline < next_deadline)
+      next_deadline = minimize_deadline;
+    timeout = next_deadline > now ? (int)((next_deadline - now) * 1000) : 0;
+    poll(&pfd, 1, timeout);
     while (XPending(dpy)) {
       XNextEvent(dpy, &ev);
 
@@ -4330,9 +4321,13 @@ void run(void) {
       if (handler[ev.type])
         handler[ev.type](&ev); /* call handler */
     }
-    if (n == 0)
+    now = time(NULL);
+    if (minimize_deadline && now >= minimize_deadline)
       checkminimize();
-    updateclock();
+    if (now >= next_clock_update) {
+      updateclock();
+      next_clock_update = now - now % 60 + 60;
+    }
   }
 }
 
@@ -6028,6 +6023,7 @@ void updatewindowtype(Client *c) {
   if (state == netatom[NetWMFullscreen])
     setfullscreen(c, 1);
   if (wtype == netatom[NetWMWindowTypeDialog]) {
+    c->iscentered = 1;
     c->isfloating = 1;
     c->isontop = DIALOG_ONTOP_PRIORITY;
   }
