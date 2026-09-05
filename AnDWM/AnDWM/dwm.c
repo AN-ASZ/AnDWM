@@ -418,6 +418,7 @@ static void setclienttagprop(Client *c);
 static void sound_monitor_start(void);
 static void sound_monitor_stop(void);
 static void setnoanimation_async(Client *c, long val);
+static void setnoanimation_sync(Client *c, long val);
 static void setworkspaceanimation(Monitor *m, int val);
 static void setcurrentdesktop(void);
 static void setdesktopnames(void);
@@ -529,6 +530,8 @@ static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
 static int running = 1;
 static int xkb_event_base = 0;
 static int alt_held = 0;
+/* Client currently being dragged; used to keep it visible across tag views. */
+static Client *dragclient = NULL;
 /* When non-zero, tiled-resizes use animated transitions via
  * resizeclient_animated. You can temporarily disable it to have
  * instant resize via resizeclient. */
@@ -950,7 +953,7 @@ void cleanup(void) {
   free(scheme);
   XDestroyWindow(dpy, wmcheckwin);
   drw_free(drw);
-  XSync(dpy, False);
+  XFlush(dpy);
   XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
   XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
 }
@@ -1045,7 +1048,7 @@ void clientmessage(XEvent *e) {
                 XEMBED_EMBEDDED_VERSION);
       sendevent(c->win, netatom[Xembed], StructureNotifyMask, CurrentTime,
                 XEMBED_MODALITY_ON, 0, systray->win, XEMBED_EMBEDDED_VERSION);
-      XSync(dpy, False);
+       XFlush(dpy);
       resizebarwin(selmon);
       updatesystray();
       setclientstate(c, NormalState);
@@ -1167,7 +1170,7 @@ void configurerequest(XEvent *e) {
     wc.stack_mode = ev->detail;
     XConfigureWindow(dpy, ev->window, ev->value_mask, &wc);
   }
-  XSync(dpy, False);
+  XFlush(dpy);
 }
 
 Monitor *createmon(void) {
@@ -1441,7 +1444,7 @@ void dragcfact(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XSync(dpy, False);
+  XFlush(dpy);
   setworkspaceanimation(selmon, 1);
   int prev_animate = animate_tiled;
   /* disable animated tiled resize while dragging to use instant resizeclient */
@@ -1646,7 +1649,7 @@ void dragmfact(const Arg *arg) {
           cursor[horizontal ? CurResizeVertArrow : CurResizeHorzArrow]->cursor,
           CurrentTime) != GrabSuccess)
     return;
-  XSync(dpy, False);
+  XFlush(dpy);
   if (m->sel)
     setworkspaceanimation(m, 1);
 
@@ -2443,7 +2446,7 @@ void focusstack(const Arg *arg) {
     restack(selmon);
     XWarpPointer(dpy, None, c->win, 0, 0, 0, 0,
                  c->w / 2, c->h / 2);
-    XSync(dpy, False);
+    XFlush(dpy);
   }
 }
 
@@ -2594,7 +2597,7 @@ void hide(Client *c) {
 
   setclientstate(c, IconicState);
   XUnmapWindow(dpy, c->win);
-  XSync(dpy, False);
+  XFlush(dpy);
 
   if (ISVISIBLE(c)) {
     focus(NULL);
@@ -2662,8 +2665,14 @@ void keypress(XEvent *e) {
 
   for (i = 0; i < LENGTH(keys); i++)
     if (keysym == keys[i].keysym &&
-        CLEANMASK(keys[i].mod) == CLEANMASK(ev->state) && keys[i].func)
+        CLEANMASK(keys[i].mod) == CLEANMASK(ev->state) && keys[i].func) {
+      if (dragclient && keys[i].func == view && (keys[i].arg.ui & TAGMASK)) {
+        dragclient->tags = keys[i].arg.ui & TAGMASK;
+        setclienttagprop(dragclient);
+      }
+
       keys[i].func(&(keys[i].arg));
+    }
 }
 
 int countwindows(void) {
@@ -2991,7 +3000,7 @@ void killclient(const Arg *arg) {
     XSetErrorHandler(xerrordummy);
     XSetCloseDownMode(dpy, DestroyAll);
     XKillClient(dpy, selmon->sel->win);
-    XSync(dpy, False);
+   XSync(dpy, False);
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
@@ -3114,7 +3123,7 @@ void manage(Window w, XWindowAttributes *wa) {
    * managed dialogs above existing floating windows after they are visible. */
   if (!HIDDEN(c) && c->isontop == DIALOG_ONTOP_PRIORITY) {
     XRaiseWindow(dpy, c->win);
-    XSync(dpy, False);
+    XFlush(dpy);
   }
 
   /* Focus the client currently under the pointer. */
@@ -3307,6 +3316,17 @@ setnoanimation_async(Client *c, long val)
   }
 }
 
+static void
+setnoanimation_sync(Client *c, long val)
+{
+  if (!c || !c->win)
+    return;
+
+  XChangeProperty(dpy, c->win, netatom[NetNoAnimation], XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char *)&val, 1);
+  XSync(dpy, False);
+}
+
 static void on_stream_param_changed(void *userdata, uint32_t id,
                                    const struct spa_pod *param) {
   if (param == NULL || id != SPA_PARAM_Format)
@@ -3407,7 +3427,7 @@ static void *clock_draw_loop(void *data) {
       XResizeWindow(dpy, clockbar_win, new_width, clockbar_bh);
       XMoveWindow(dpy, clockbar_win, clockbar_cx - (int)(new_width / 2),
                   clockbar_by);
-      XFlush(dpy);
+    XFlush(dpy);
       last_width = new_width;
     }
   }
@@ -3534,16 +3554,21 @@ void movemouse(const Arg *arg) {
     togglefloating_noarrange(c);
   }
   restack(selmon);
-  XSync(dpy, False); // Ensure floating state and restack are processed
+  XFlush(dpy);
   lastw = c->w;
   lasth = c->h;
 
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, last_ev_time) != GrabSuccess)
     return;
+  dragclient = c;
   setnoanimation_async(c, 1);
-  if (!getrootptr(&x, &y))
+  if (!getrootptr(&x, &y)) {
+    XUngrabPointer(dpy, CurrentTime);
+    dragclient = NULL;
+    setnoanimation_async(c, 0);
     return;
+  }
   /* Calculate offset from window top-left to mouse position */
   rel_x = x - c->x;
   rel_y = y - c->y;
@@ -3554,8 +3579,12 @@ void movemouse(const Arg *arg) {
   resize(c, nx, ny, c->w, c->h, 1);
   XFlush(dpy);
   do {
-    XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
+    XMaskEvent(dpy, MOUSEMASK | KeyPressMask | ExposureMask |
+                           SubstructureRedirectMask, &ev);
     switch (ev.type) {
+    case KeyPress:
+      keypress(&ev);
+      break;
     case ConfigureRequest:
     case Expose:
     case MapRequest:
@@ -3602,8 +3631,9 @@ void movemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  XSync(dpy, False);
-  setnoanimation_async(c, 0);
+  dragclient = NULL;
+  XFlush(dpy);
+  setnoanimation_sync(c, 0);
   /*
    * Decide the destination monitor from the mouse cursor on release.
    * Check BEFORE arrange to prevent applysizehints() from clamping
@@ -3625,7 +3655,7 @@ void movemouse(const Arg *arg) {
 }
 
 Client *nexttiled(Client *c) {
-  for (; c && (c->isfloating || (!ISVISIBLE(c) || HIDDEN(c))); c = c->next)
+  for (; c && (c == dragclient || c->isfloating || (!ISVISIBLE(c) || HIDDEN(c))); c = c->next)
     ;
   return c;
 }
@@ -3650,7 +3680,8 @@ void placemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XSync(dpy, False);
+  dragclient = c;
+  XFlush(dpy);
   setnoanimation_async(c, 1);
 
   c->isfloating = 0;
@@ -3660,13 +3691,22 @@ void placemouse(const Arg *arg) {
   ocx = wa.x;
   ocy = wa.y;
 
-  if (!getrootptr(&x, &y))
+  if (!getrootptr(&x, &y)) {
+    XUngrabPointer(dpy, CurrentTime);
+    dragclient = NULL;
+    c->beingmoved = 0;
+    setnoanimation_async(c, 0);
     return;
+  }
 
   XFlush(dpy);
   do {
-    XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
+    XMaskEvent(dpy, MOUSEMASK | KeyPressMask | ExposureMask |
+                           SubstructureRedirectMask, &ev);
     switch (ev.type) {
+    case KeyPress:
+      keypress(&ev);
+      break;
     case ConfigureRequest:
     case Expose:
     case MapRequest:
@@ -3682,8 +3722,13 @@ void placemouse(const Arg *arg) {
       if (!freemove && (abs(nx - ocx) > snap || abs(ny - ocy) > snap))
         freemove = 1;
 
-      if (freemove)
+      if (freemove) {
+        /* Keep the managed geometry in sync with the temporary drag position.
+         * Tag switches call showhide(), which otherwise restores c->x/c->y. */
+        c->x = nx;
+        c->y = ny;
         XMoveWindow(dpy, c->win, nx, ny);
+      }
 
       if ((m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1)) && m != selmon)
         selmon = m;
@@ -3744,7 +3789,8 @@ void placemouse(const Arg *arg) {
     }
   } while (ev.type != ButtonRelease);
   XUngrabPointer(dpy, CurrentTime);
-  setnoanimation_async(c, 0);
+  dragclient = NULL;
+  setnoanimation_sync(c, 0);
 
   if ((m = recttomon(ev.xmotion.x, ev.xmotion.y, 1, 1)) && m != c->mon) {
     detach(c);
@@ -4005,7 +4051,7 @@ void resizeclient(Client *c, int x, int y, int w, int h) {
     }
   }
   configure(c);
-  XSync(dpy, False);
+  XFlush(dpy);
 }
 
 static Window ontopsibling(Monitor *m, Client *exclude) {
@@ -4045,7 +4091,7 @@ void resizemouse(const Arg *arg) {
   if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
                    None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
     return;
-  XSync(dpy, False);
+  XFlush(dpy);
   setnoanimation_async(c, 1);
 
   if (!getrootptr(&mx, &my))
@@ -4102,7 +4148,7 @@ void resizemouse(const Arg *arg) {
   } while (ev.type != ButtonRelease);
 
   XUngrabPointer(dpy, CurrentTime);
-  setnoanimation_async(c, 0);
+  setnoanimation_sync(c, 0);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
 
@@ -4185,7 +4231,7 @@ void restack(Monitor *m) {
       isontop_sibling = c->win;
     }
   }
-  XSync(dpy, False);
+  XFlush(dpy);
   while (XCheckMaskEvent(dpy, EnterWindowMask, &ev))
     ;
   if (m && m->sidebarvisible)
@@ -4227,7 +4273,8 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
 
   /* Set windows leaving the view to IconicState */
   for (c = m->clients; c; c = c->next) {
-    if ((c->tags & oldtags) && !(c->tags & newtags) && !c->issticky &&
+    if (c != dragclient && (c->tags & oldtags) && !(c->tags & newtags) &&
+        !c->issticky &&
         !HIDDEN(c)) {
       int minimizable = shouldminimize(c);
       if (minimizable)
@@ -4273,7 +4320,7 @@ void prepare_workspace_switch(Monitor *m, unsigned int oldtags, unsigned int new
       }
     }
     if (!all_done)
-      XSync(dpy, False);
+   XFlush(dpy);
   } while (!all_done && ++attempts < 200);
 }
 
@@ -4285,7 +4332,7 @@ void run(void) {
   struct pollfd pfd = {.fd = xfd, .events = POLLIN};
 
   /* main event loop */
-  XSync(dpy, False);
+  XFlush(dpy);
   updateclock();
   next_clock_update = time(NULL) / 60 * 60 + 60;
   while (running) {
@@ -5229,7 +5276,7 @@ void showtagpreview(int tag) {
     XSetWindowBackgroundPixmap(dpy, selmon->tagwin, selmon->tagmap[tag]);
     XCopyArea(dpy, selmon->tagmap[tag], selmon->tagwin, drw->gc, 0, 0,
               selmon->mw / scalepreview, selmon->mh / scalepreview, 0, 0);
-    XSync(dpy, False);
+     XFlush(dpy);
     XMapWindow(dpy, selmon->tagwin);
   } else
     XUnmapWindow(dpy, selmon->tagwin);
@@ -5354,14 +5401,21 @@ void togglefloating_noarrange(Client *c) {
 }
 
 void togglefloating(const Arg *arg) {
-  if (!selmon->sel)
+  Client *c = dragclient ? dragclient : selmon->sel;
+
+  if (!c)
     return;
-  if (selmon->sel->isfullscreen || selmon->sel->issticky) /* no support for fullscreen or sticky windows */
+  if (c->isfullscreen || c->issticky) /* no support for fullscreen or sticky windows */
     return;
-  selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
-  if (selmon->sel->isfloating)
-    resize(selmon->sel, selmon->sel->x, selmon->sel->y, selmon->sel->w,
-           selmon->sel->h, 0);
+
+  c->isfloating = !c->isfloating || c->isfixed;
+  if (c->isfloating)
+    resize(c, c->x, c->y, c->w, c->h, 0);
+
+  /* Do not tile or reposition the client while a pointer drag is active. */
+  if (dragclient)
+    return;
+
   arrange(selmon);
 }
 
@@ -5518,7 +5572,7 @@ void unmanage(Client *c, int destroyed) {
     XConfigureWindow(dpy, c->win, CWBorderWidth, &wc); /* restore border */
     XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
     setclientstate(c, WithdrawnState);
-    XSync(dpy, False);
+   XFlush(dpy);
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
@@ -6006,7 +6060,7 @@ void updatesystray(void) {
   /* redraw background */
   XSetForeground(dpy, drw->gc, scheme[SchemeNorm][ColBg].pixel);
   XFillRectangle(dpy, systray->win, drw->gc, 0, 0, w, bh);
-  XSync(dpy, False);
+  XFlush(dpy);
 }
 
 void updatetitle(Client *c) {
@@ -6056,7 +6110,7 @@ void view(const Arg *arg) {
   
   newtagset = arg->ui & TAGMASK ? arg->ui & TAGMASK : selmon->pertag->prevtag;
   updatecurrentdesktop(newtagset);
-  XSync(dpy,False);
+   XFlush(dpy);
   prepare_workspace_switch(selmon, selmon->tagset[selmon->seltags], newtagset);
   switchtag();
   selmon->seltags ^= 1; /* toggle sel tagset */
