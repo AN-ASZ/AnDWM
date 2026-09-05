@@ -4284,6 +4284,7 @@ void checkminimize(void) {
         if (now - c->lastvisible >= 1) {
           hide(c);
           c->isautominimized = 1;
+          c->lastvisible = 0;
         }
 }
 
@@ -4294,7 +4295,7 @@ static time_t next_minimize_deadline(void) {
 
   for (m = mons; m; m = m->next)
     for (c = m->clients; c; c = c->next)
-      if (c != m->sel && !ISVISIBLE(c) && !c->issticky &&
+      if (c != m->sel && !ISVISIBLE(c) && !HIDDEN(c) && !c->issticky &&
           c->lastvisible > 0 && (!deadline || c->lastvisible + 1 < deadline))
         deadline = c->lastvisible + 1;
 
